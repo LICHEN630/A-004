@@ -1,0 +1,303 @@
+﻿<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股價追蹤 (動態搜尋版)</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <style>
+        .fomo-fire {
+            color: #ff4500;
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+<body class="bg-light">
+
+    <div class="container mt-5">
+        <h1>股價追蹤</h1>
+        <div class="card shadow-sm mt-3">
+            <div class="card-header bg-white">
+                <ul class="nav nav-tabs card-header-tabs" id="myTab" role="tablist">
+                    <li class="nav-item"><button class="nav-link active" id="stock_market_news-tab" data-toggle="tab" data-target="#stock_market_news" type="button" role="tab">飆股資訊(詐騙)</button></li>
+                    <li class="nav-item"><button class="nav-link" id="kline-tab" data-toggle="tab" data-target="#kline_view" type="button" role="tab">K 線圖 (即時搜尋)</button></li>
+                </ul>
+            </div>
+            <div class="card-body">
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="stock_market_news" role="tabpanel">
+                        <h5 class="text-danger"><i class="fas fa-fire"></i> 社群熱門飆股統計</h5>
+                        <p class="text-muted small">根據社群文章自動統計提及次數與煽動話術：</p>
+                        <table class="table table-hover">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th>股票代號</th>
+                                    <th>股票名稱</th>
+                                    <th>提及次數</th>
+                                    <!-- 【新增】：FOMO與話術欄位 -->
+                                    <th>FOMO 煽動指數</th>
+                                    <th>出現話術</th>
+                                    <th>K線圖</th>
+                                </tr>
+                            </thead>
+                            <tbody id="stock-stats-body">
+                                <tr><td colspan="6" class="text-center">正在從資料庫撈取統計資料...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="tab-pane fade" id="kline_view" role="tabpanel">
+                        <div class="row mb-4">
+                            <div class="col-md-6 col-12">
+                                <label>搜尋台股歷史 K 線：</label>
+                                <div class="input-group">
+                                    <input type="text" id="stock-input" class="form-control" placeholder="輸入股票代號 (例: 2330, 2603, 0050)" value="2330">
+                                    <div class="input-group-append">
+                                        <button class="btn btn-primary" type="button" id="btn-search">
+                                            <i class="fas fa-search"></i> 搜尋
+                                        </button>
+                                        <button class="btn btn-secondary" type="button" id="btn-return">
+                                            <i class="fas fa-undo"></i> 返回
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <h4 id="chart-title" class="mb-3 text-primary">等待搜尋...</h4>
+                        <div id="chart-candlestick">
+                            <div class="alert alert-info text-center">請輸入股票代號並按下搜尋。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAcbmKq907jBvdlkHygS0JgK1hy0IdDTqs",
+            authDomain: "ai-001-d64e3.firebaseapp.com",
+            projectId: "ai-001-d64e3",
+            storageBucket: "ai-001-d64e3.firebasestorage.app",
+            messagingSenderId: "921394535619",
+            appId: "1:921394535619:web:9b95a5f0f3f709cc5dd676",
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let stockNameMap = null;
+
+        async function fetchStockNames() {
+            if (stockNameMap) return stockNameMap;
+            try {
+                const response = await fetch('https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo');
+                const json = await response.json();
+                const map = {};
+                if (json.msg === "success" && json.data) {
+                    json.data.forEach(item => {
+                        map[item.stock_id] = item.stock_name;
+                    });
+                }
+                stockNameMap = map;
+                return map;
+            } catch (error) {
+                console.error("載入股票名稱清單失敗:", error);
+                return {};
+            }
+        }
+
+        // --- 讀取統計資料邏輯 ---
+        async function loadStockStats() {
+            const tbody = document.querySelector("#stock-stats-body");
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center">正在從資料庫與 API 撈取資料...</td></tr>`;
+            try {
+                const [querySnapshot, nameMap] = await Promise.all([
+                    getDocs(collection(db, "threads_tips")),
+                    fetchStockNames()
+                ]);
+
+                const stats = {};
+
+                // 定義煽動性與操作關鍵字
+                const hypeWords = ["上車", "買爆", "閉眼買", "閉眼入", "會漲停", "會大漲", "繼續抱", "噴出", "發財",
+                    "還要漲", "即將大爆發", "買必賺", "不是極限", "買爆它", "趕緊買入", "不是極限", "還會漲"];
+                const bearWords = ["下車", "快逃", "割韭菜", "出清", "跌停", "先別碰"];
+
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const stocks = data.mentioned_stocks;
+                    const content = data.content || "";
+
+                    if (stocks && Array.isArray(stocks)) {
+                        stocks.forEach(stock => {
+                            if (!stats[stock]) {
+                                stats[stock] = { count: 0, hypeScore: 0, tags: new Set() };
+                            }
+                            stats[stock].count++;
+
+                            // 檢查文章中是否包含煽動話術
+                            hypeWords.forEach(word => {
+                                if (content.includes(word)) {
+                                    stats[stock].hypeScore++;
+                                    stats[stock].tags.add(word);
+                                }
+                            });
+                            bearWords.forEach(word => {
+                                if (content.includes(word)) {
+                                    // 看空的話術也可以記錄，用不同顏色顯示
+                                    stats[stock].tags.add(word);
+                                }
+                            });
+                        });
+                    }
+                });
+
+                // 依據提及次數排序
+                const sortedStats = Object.entries(stats).sort((a, b) => b[1].count - a[1].count);
+
+                tbody.innerHTML = sortedStats.map(([stock, data]) => {
+                    const stockName = nameMap[stock] || '<span class="text-muted small">未知名稱</span>';
+
+                    // 產生 FOMO 火焰圖標 (最高顯示5把火)
+                    const fireIcons = data.hypeScore > 0
+                        ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(Math.min(data.hypeScore, 5))
+                        : '<span class="text-muted">-</span>';
+
+                    // 產生話術標籤 (看空詞彙用綠色，看多用紅色)
+                    const tagBadges = Array.from(data.tags).map(tag => {
+                        const isBear = bearWords.includes(tag);
+                        return `<span class="badge ${isBear ? 'badge-success' : 'badge-warning text-dark'} mr-1">${tag}</span>`;
+                    }).join('') || '<span class="text-muted small">無特別話術</span>';
+
+                    return `
+                            <tr>
+                                <td class="align-middle"><strong>${stock}</strong></td>
+                                <td class="align-middle">${stockName}</td>
+                                <td class="align-middle"><span class="badge badge-pill badge-primary">${data.count} 次</span></td>
+                                <td class="align-middle">${fireIcons}</td>
+                                <td class="align-middle">${tagBadges}</td>
+                                <td class="align-middle">
+                                    <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${stock}">
+                                        <i class="fas fa-chart-line"></i> 檢視
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                }).join('');
+
+                if (sortedStats.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="6" class="text-center">目前沒有熱門股票紀錄。</td></tr>`;
+                }
+
+            } catch (e) {
+                console.error("讀取資料失敗:", e);
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">讀取失敗，請檢查資料庫權限或連線設定。</td></tr>`;
+            }
+        }
+
+        $('#stock_market_news-tab').on('shown.bs.tab', loadStockStats);
+        loadStockStats();
+
+
+        // --- K線圖查詢邏輯 ---
+        let currentChart = null;
+
+        async function searchAndRenderKLine() {
+            const stockNo = document.getElementById('stock-input').value.trim();
+            const container = document.querySelector("#chart-candlestick");
+            const titleLabel = document.querySelector("#chart-title");
+
+            if (!stockNo) {
+                alert("請輸入股票代號！");
+                return;
+            }
+
+            titleLabel.innerText = `正在查詢 ${stockNo} 的資料...`;
+            container.innerHTML = `<div class="text-center my-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">連線至 FinMind API 載入中...</p></div>`;
+
+            try {
+                const d = new Date();
+                d.setDate(d.getDate() - 90);
+                const startDate = d.toISOString().split('T')[0];
+
+                const apiUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${stockNo}&start_date=${startDate}`;
+                const response = await fetch(apiUrl);
+                if (!response.ok) throw new Error("API 請求失敗，請稍後再試。");
+
+                const json = await response.json();
+
+                if (json.msg !== "success" || !json.data || json.data.length === 0) {
+                    throw new Error(`找不到代號 [${stockNo}] 的歷史資料，請確認代號是否為上市櫃股票。`);
+                }
+
+                const formattedData = json.data.map(item => ({
+                    x: new Date(item.date).getTime(),
+                    y: [item.open, item.max, item.min, item.close]
+                }));
+
+                let displayTitle = `股票代號：${stockNo}`;
+                if (stockNameMap && stockNameMap[stockNo]) {
+                    displayTitle = `${stockNameMap[stockNo]} (${stockNo})`;
+                }
+                titleLabel.innerText = `${displayTitle} (近90天走勢)`;
+
+                const options = {
+                    series: [{ name: 'K線', type: 'candlestick', data: formattedData }],
+                    chart: { type: 'candlestick', height: 400 },
+                    xaxis: { type: 'datetime' }
+                };
+
+                container.innerHTML = "";
+                if (currentChart) currentChart.destroy();
+
+                currentChart = new ApexCharts(container, options);
+                currentChart.render();
+
+            } catch (error) {
+                console.error(error);
+                titleLabel.innerText = "查詢失敗";
+                container.innerHTML = `<div class="alert alert-danger text-center"><h5><i class="fas fa-exclamation-triangle"></i> 發生錯誤</h5>${error.message}</div>`;
+            }
+        }
+
+        $('#btn-search').on('click', searchAndRenderKLine);
+        $('#stock-input').on('keypress', function (e) {
+            if (e.which === 13) searchAndRenderKLine();
+        });
+
+        $('#btn-return').on('click', function () {
+            $('#stock_market_news-tab').tab('show');
+        });
+
+        let isFirstTime = true;
+        $('#kline-tab').on('shown.bs.tab', function () {
+            if (isFirstTime) {
+                searchAndRenderKLine();
+                isFirstTime = false;
+            }
+        });
+
+        document.querySelector("#stock-stats-body").addEventListener('click', function (e) {
+            const btn = e.target.closest('.view-kline-btn');
+            if (btn) {
+                const stockNo = btn.getAttribute('data-stock');
+                document.getElementById('stock-input').value = stockNo;
+                isFirstTime = false;
+                $('#kline-tab').tab('show');
+                searchAndRenderKLine();
+            }
+        });
+
+    </script>
+</body>
+</html>

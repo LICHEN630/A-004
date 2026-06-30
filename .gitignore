@@ -1,0 +1,27 @@
+# 忽略 .NET 編譯產生的資料夾
+[Bb]in/
+[Oo]bj/
+.vs/
+bin/
+obj/
+
+# 忽略金鑰檔案 (保護您的資料庫)
+firebase-key.json
+*.pem
+*.p12
+
+# 只忽略根目錄下的 bin 資料夾
+/bin/
+
+# 只忽略 stock-fetcher 目錄下的 bin 資料夾
+stock-fetcher/bin/
+stock-fetcher/obj/
+
+# 忽略 Playwright 爬蟲產生的瀏覽器暫存 (解決上傳錯誤的關鍵)
+user-data/
+playwright.config/
+
+# 忽略其他常見暫存檔
+*.user
+*.suo
+*.log

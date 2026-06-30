@@ -1,0 +1,29 @@
+name: Stock Fetcher Schedule
+
+on:
+  schedule:
+    # 這裡使用 Cron 語法，設定每小時的第 0 分鐘執行一次 (例如 1:00, 2:00...)
+    - cron: '0 * * * *'
+  workflow_dispatch: # 允許你在 GitHub 網頁上手動點擊按鈕立刻執行測試
+
+jobs:
+  run-fetcher:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 檢出程式碼
+      uses: actions/checkout@v4
+
+    - name: 設定 .NET 環境
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0' # 根據你的專案版本調整
+
+    - name: 還原 NuGet 套件
+      run: dotnet restore stock-fetcher/stock-fetcher.csproj
+
+    - name: 執行抓取程式
+      # 將 GitHub Secrets 中的秘密變數注入到虛擬機的環境變數中
+      env:
+        FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
+      run: dotnet run --project stock-fetcher/stock-fetcher.csproj
