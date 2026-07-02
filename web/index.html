@@ -245,10 +245,28 @@
                 return 0;
             });
 
+            // 【新增】：自定義火焰分數區間轉換函式
+            function getFireIconCount(score) {
+                if (score === 0) return 0;
+                if (score >= 1 && score <= 5) return 1;  
+                if (score >= 6 && score <= 10) return 2; 
+                if (score >= 11 && score <= 15) return 3;
+                if (score >= 15 && score <= 20) return 4;
+                if (score >= 20 && score <= 25) return 5;
+                if (score >= 25 && score <= 30) return 6;
+                if (score >= 30 && score <= 35) return 7;
+                if (score >= 35 && score <= 40) return 8;
+                if (score >= 40 && score <= 45) return 9;
+                return 10;
+            }
+
             // 2. 產生 HTML
+
             tbody.innerHTML = tableData.map(row => {
-                const fireIcons = row.hypeScore > 0
-                    ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(Math.min(row.hypeScore, 10))
+                // 【修改】：使用自定義的區間函式來決定火焰數量，並在旁邊附上實際分數
+                const fireCount = getFireIconCount(row.hypeScore);
+                const fireIcons = fireCount > 0
+                    ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(fireCount) + `<span class="ml-2 font-weight-bold text-danger small"></span>`
                     : '<span class="text-muted">-</span>';
 
                 const tagBadges = row.tags.map(tag => {
@@ -257,19 +275,19 @@
                 }).join('') || '<span class="text-muted small">無特別話術</span>';
 
                 return `
-                        <tr>
-                            <td class="align-middle"><strong>${row.id}</strong></td>
-                            <td class="align-middle">${row.name === '未知名稱' ? '<span class="text-muted small">未知名稱</span>' : row.name}</td>
-                            <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
-                            <td class="align-middle">${fireIcons}</td>
-                            <td class="align-middle">${tagBadges}</td>
-                            <td class="align-middle">
-                                <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
-                                    <i class="fas fa-chart-line"></i> 檢視
-                                </button>
-                            </td>
-                        </tr>
-                    `;
+                    <tr>
+                        <td class="align-middle"><strong>${row.id}</strong></td>
+                        <td class="align-middle">${row.name === '未知名稱' ? '<span class="text-muted small">未知名稱</span>' : row.name}</td>
+                        <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
+                        <td class="align-middle">${fireIcons}</td>
+                        <td class="align-middle">${tagBadges}</td>
+                        <td class="align-middle">
+                            <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
+                                <i class="fas fa-chart-line"></i> 檢視
+                            </button>
+                        </td>
+                    </tr>
+                `;
             }).join('');
         }
 
