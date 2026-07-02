@@ -13,11 +13,35 @@
             color: #ff4500;
             font-size: 1.1rem;
         }
+        /* 【新增】：排序表頭的樣式 */
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+
+            th.sortable:hover {
+                background-color: #e9ecef;
+            }
+
+        .sort-icon {
+            margin-left: 5px;
+            font-size: 0.9em;
+            color: #999;
+        }
+
+        th.sortable.active-asc .sort-icon {
+            color: #007bff;
+        }
+
+        th.sortable.active-desc .sort-icon {
+            color: #007bff;
+        }
     </style>
 </head>
 <body class="bg-light">
 
-    <div class="container mt-5">
+    <div class="container-fluid px-4 mt-4">
         <h1>股價追蹤</h1>
         <div class="card shadow-sm mt-3">
             <div class="card-header bg-white">
@@ -30,15 +54,15 @@
                 <div class="tab-content">
                     <div class="tab-pane fade show active" id="stock_market_news" role="tabpanel">
                         <h5 class="text-danger"><i class="fas fa-fire"></i> 社群熱門飆股統計</h5>
-                        <p class="text-muted small">根據社群文章自動統計提及次數與煽動話術：</p>
+                        <p class="text-muted small">根據社群文章自動統計提及次數與煽動話術 (點擊表頭可排序)：</p>
                         <table class="table table-hover">
                             <thead class="thead-light">
                                 <tr>
-                                    <th>股票代號</th>
-                                    <th>股票名稱</th>
-                                    <th>提及次數</th>
-                                    <!-- 【新增】：FOMO與話術欄位 -->
-                                    <th>FOMO 煽動指數</th>
+                                    <!-- 【新增】：為表頭加上 data-sort 屬性來識別排序欄位 -->
+                                    <th class="sortable" data-sort="id">股票代號 <i class="fas fa-sort sort-icon"></i></th>
+                                    <th class="sortable" data-sort="name">股票名稱 <i class="fas fa-sort sort-icon"></i></th>
+                                    <th class="sortable active-desc" data-sort="count">提及次數 <i class="fas fa-sort-down sort-icon"></i></th>
+                                    <th class="sortable" data-sort="hypeScore">FOMO 煽動指數 <i class="fas fa-sort sort-icon"></i></th>
                                     <th>出現話術</th>
                                     <th>K線圖</th>
                                 </tr>
@@ -97,6 +121,11 @@
 
         let stockNameMap = null;
 
+        // 【新增】：用於儲存表格資料與目前排序狀態的全域變數
+        let tableData = [];
+        let currentSort = { column: 'count', order: 'desc' }; // 預設依提及次數降冪
+        const bearWords = ["下車", "快逃", "割韭菜", "出清", "跌停", "先別碰"]; // 提升作用域供 render 使用
+
         async function fetchStockNames() {
             if (stockNameMap) return stockNameMap;
             try {
@@ -116,7 +145,7 @@
             }
         }
 
-        // --- 讀取統計資料邏輯 ---
+        // --- 讀取統計資料並存入 tableData ---
         async function loadStockStats() {
             const tbody = document.querySelector("#stock-stats-body");
             tbody.innerHTML = `<tr><td colspan="6" class="text-center">正在從資料庫與 API 撈取資料...</td></tr>`;
@@ -127,14 +156,27 @@
                 ]);
 
                 const stats = {};
-
-                // 定義煽動性與操作關鍵字
                 const hypeWords = ["上車", "買爆", "閉眼買", "閉眼入", "會漲停", "會大漲", "繼續抱", "噴出", "發財",
-                    "還要漲", "即將大爆發", "買必賺", "不是極限", "買爆它", "趕緊買入", "不是極限", "還會漲"];
-                const bearWords = ["下車", "快逃", "割韭菜", "出清", "跌停", "先別碰"];
+                    "還要漲", "即推大爆發", "買必賺", "不是極限", "買爆它", "趕緊買入", "不是極限", "還會漲", "會漲噴"];
+
+                // 【新增】：設定 14 天的時間過濾門檻 (只統計 14 天內的貼文)
+                const cutoffDate = new Date();
+                cutoffDate.setDate(cutoffDate.getDate() - 10);
 
                 querySnapshot.forEach((doc) => {
                     const data = doc.data();
+
+                    // 【新增】：過濾 14 天以上的歷史資料
+                    if (data.crawl_time) {
+                        // 判斷 crawl_time 是 Firestore 的 Timestamp 格式，將其轉換為 JS Date 物件
+                        const postDate = typeof data.crawl_time.toDate === 'function' ? data.crawl_time.toDate() : new Date(data.crawl_time);
+
+                        // 如果文章爬取時間比 14 天前 (cutoffDate) 還早，就直接跳過不統計
+                        if (postDate < cutoffDate) {
+                            return; // forEach 中的 return 相當於跳過這一筆 (continue)
+                        }
+                    }
+
                     const stocks = data.mentioned_stocks;
                     const content = data.content || "";
 
@@ -145,7 +187,6 @@
                             }
                             stats[stock].count++;
 
-                            // 檢查文章中是否包含煽動話術
                             hypeWords.forEach(word => {
                                 if (content.includes(word)) {
                                     stats[stock].hypeScore++;
@@ -154,7 +195,6 @@
                             });
                             bearWords.forEach(word => {
                                 if (content.includes(word)) {
-                                    // 看空的話術也可以記錄，用不同顏色顯示
                                     stats[stock].tags.add(word);
                                 }
                             });
@@ -162,42 +202,19 @@
                     }
                 });
 
-                // 依據提及次數排序
-                const sortedStats = Object.entries(stats).sort((a, b) => b[1].count - a[1].count);
+                // 【修改】：將資料轉換成易於排序的陣列物件
+                tableData = Object.entries(stats).map(([stock, data]) => {
+                    return {
+                        id: stock,
+                        name: nameMap[stock] || '未知名稱',
+                        count: data.count,
+                        hypeScore: data.hypeScore,
+                        tags: Array.from(data.tags)
+                    };
+                });
 
-                tbody.innerHTML = sortedStats.map(([stock, data]) => {
-                    const stockName = nameMap[stock] || '<span class="text-muted small">未知名稱</span>';
-
-                    // 產生 FOMO 火焰圖標 (最高顯示5把火)
-                    const fireIcons = data.hypeScore > 0
-                        ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(Math.min(data.hypeScore, 5))
-                        : '<span class="text-muted">-</span>';
-
-                    // 產生話術標籤 (看空詞彙用綠色，看多用紅色)
-                    const tagBadges = Array.from(data.tags).map(tag => {
-                        const isBear = bearWords.includes(tag);
-                        return `<span class="badge ${isBear ? 'badge-success' : 'badge-warning text-dark'} mr-1">${tag}</span>`;
-                    }).join('') || '<span class="text-muted small">無特別話術</span>';
-
-                    return `
-                            <tr>
-                                <td class="align-middle"><strong>${stock}</strong></td>
-                                <td class="align-middle">${stockName}</td>
-                                <td class="align-middle"><span class="badge badge-pill badge-primary">${data.count} 次</span></td>
-                                <td class="align-middle">${fireIcons}</td>
-                                <td class="align-middle">${tagBadges}</td>
-                                <td class="align-middle">
-                                    <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${stock}">
-                                        <i class="fas fa-chart-line"></i> 檢視
-                                    </button>
-                                </td>
-                            </tr>
-                        `;
-                }).join('');
-
-                if (sortedStats.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="6" class="text-center">目前沒有熱門股票紀錄。</td></tr>`;
-                }
+                // 呼叫渲染函式 (裡面包含了排序邏輯)
+                renderTable();
 
             } catch (e) {
                 console.error("讀取資料失敗:", e);
@@ -205,9 +222,88 @@
             }
         }
 
+        // 【新增】：渲染表格的獨立函式
+        function renderTable() {
+            const tbody = document.querySelector("#stock-stats-body");
+
+            if (tableData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center">目前沒有熱門股票紀錄。</td></tr>`;
+                return;
+            }
+
+            // 1. 執行排序
+            tableData.sort((a, b) => {
+                let valA = a[currentSort.column];
+                let valB = b[currentSort.column];
+
+                // 針對文字型態與數字型態防呆
+                if (typeof valA === 'string') valA = valA.toString().toLowerCase();
+                if (typeof valB === 'string') valB = valB.toString().toLowerCase();
+
+                if (valA < valB) return currentSort.order === 'asc' ? -1 : 1;
+                if (valA > valB) return currentSort.order === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            // 2. 產生 HTML
+            tbody.innerHTML = tableData.map(row => {
+                const fireIcons = row.hypeScore > 0
+                    ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(Math.min(row.hypeScore, 10))
+                    : '<span class="text-muted">-</span>';
+
+                const tagBadges = row.tags.map(tag => {
+                    const isBear = bearWords.includes(tag);
+                    return `<span class="badge ${isBear ? 'badge-success' : 'badge-warning text-dark'} mr-1">${tag}</span>`;
+                }).join('') || '<span class="text-muted small">無特別話術</span>';
+
+                return `
+                        <tr>
+                            <td class="align-middle"><strong>${row.id}</strong></td>
+                            <td class="align-middle">${row.name === '未知名稱' ? '<span class="text-muted small">未知名稱</span>' : row.name}</td>
+                            <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
+                            <td class="align-middle">${fireIcons}</td>
+                            <td class="align-middle">${tagBadges}</td>
+                            <td class="align-middle">
+                                <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
+                                    <i class="fas fa-chart-line"></i> 檢視
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+            }).join('');
+        }
+
+        // 【新增】：綁定表頭排序點擊事件
+        document.querySelectorAll('th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const column = th.getAttribute('data-sort');
+
+                // 切換排序狀態
+                if (currentSort.column === column) {
+                    currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
+                } else {
+                    currentSort.column = column;
+                    currentSort.order = 'desc'; // 換新欄位時，預設先由大到小排
+                }
+
+                // 更新表頭 UI (更換圖示)
+                document.querySelectorAll('th.sortable').forEach(header => {
+                    header.classList.remove('active-asc', 'active-desc');
+                    const icon = header.querySelector('.sort-icon');
+                    icon.className = 'fas fa-sort sort-icon'; // 恢復預設
+                });
+
+                th.classList.add(currentSort.order === 'asc' ? 'active-asc' : 'active-desc');
+                const activeIcon = th.querySelector('.sort-icon');
+                activeIcon.className = currentSort.order === 'asc' ? 'fas fa-sort-up sort-icon text-primary' : 'fas fa-sort-down sort-icon text-primary';
+
+                // 重新渲染畫面
+                renderTable();
+            });
+        });
+
         $('#stock_market_news-tab').on('shown.bs.tab', loadStockStats);
         loadStockStats();
-
 
         // --- K線圖查詢邏輯 ---
         let currentChart = null;
@@ -254,7 +350,19 @@
                 const options = {
                     series: [{ name: 'K線', type: 'candlestick', data: formattedData }],
                     chart: { type: 'candlestick', height: 400 },
-                    xaxis: { type: 'datetime' }
+                    xaxis: { type: 'datetime' },
+                    // 【關鍵修改】：將外國的綠漲紅跌改為台股的紅漲綠跌
+                    plotOptions: {
+                        candlestick: {
+                            colors: {
+                                upward: '#dc3545',   // Bootstrap 的危險紅 (表示上漲)
+                                downward: '#28a745'  // Bootstrap 的成功綠 (表示下跌)
+                            },
+                            wick: {
+                                useFillColor: true   // 引線顏色與實體顏色一致
+                            }
+                        }
+                    }
                 };
 
                 container.innerHTML = "";

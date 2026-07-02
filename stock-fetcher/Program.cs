@@ -68,11 +68,12 @@ class Program
 
     static async Task RunThreadsTask(FirestoreDb db)
     {
-        Console.WriteLine("\n--- [任務 2] 開始執行 Playwright (多關鍵字循環 + 防錯點擊) ---");
+        Console.WriteLine("\n--- [任務 2] 開始執行 Playwright (多關鍵字循環 + 防錯點擊 + 網址除錯) ---");
 
         List<string> keywords = new List<string> {
             "可以買","閉眼買","閉眼入","會漲停","會有驚喜","我的建議",
-            "明天的散戶","台股","漲停","飆股","獲利","上車","散戶","AI","輝達"
+            "今天的散戶","明天的散戶","台股","漲停","飆股","獲利","上車","散戶","報牌","因為我不缺錢",
+            "買在起漲點","賣在高峰處"
         };
         int minStockCount = 2;
 
@@ -119,19 +120,24 @@ class Program
                 }
 
                 // 向下捲動抓取資料
-                for (int i = 0; i < 20; i++)
+                for (int i = 0; i < 40; i++)
                 {
                     await page.EvaluateAsync("window.scrollTo(0, document.body.scrollHeight)");
-                    await Task.Delay(5000);
+                    await Task.Delay(7000);
                 }
 
-                // 抓取當前頁面資料
+                // 抓取當前頁面資料 (加回時間標籤的擷取)
                 var posts = await page.EvaluateAsync<JsonElement>(@"() => {
                     const results = [];
                     document.querySelectorAll('div[data-pressable-container=""true""]').forEach(art => {
                         const linkEl = art.querySelector('a[href*=""/post/""]');
+                        const timeEl = art.querySelector('time'); 
                         if (linkEl) {
-                            results.push({ post_url: linkEl.href, text_content: art.innerText || '' });
+                            results.push({ 
+                                post_url: linkEl.href, 
+                                text_content: art.innerText || '',
+                                time_text: timeEl ? timeEl.innerText : ''
+                            });
                         }
                     });
                     return results;
@@ -149,8 +155,28 @@ class Program
             {
                 string postUrl = post.GetProperty("post_url").GetString() ?? "";
                 string content = post.GetProperty("text_content").GetString() ?? "";
+                string timeText = post.GetProperty("time_text").GetString() ?? "";
 
-                if (string.IsNullOrEmpty(postUrl) || existingUrls.Contains(postUrl)) continue;
+                // 1. 資料庫已儲存過的貼文直接跳過，不加入計算
+                if (string.IsNullOrEmpty(postUrl) || existingUrls.Contains(postUrl))
+                {
+                    continue;
+                }
+
+                // 2. 篩選 24 小時內的貼文
+                // Threads 時間格式包含 s(秒), m(分), h(時)。若包含 d(天), w(週) 則代表超過 24 小時。
+                bool isWithin24Hours = !string.IsNullOrEmpty(timeText) &&
+                                       (timeText.Contains("s") || timeText.Contains("m") || timeText.Contains("h") ||
+                                        timeText.Contains("秒") || timeText.Contains("分") || timeText.Contains("時")) &&
+                                       !(timeText.Contains("d") || timeText.Contains("w") || timeText.Contains("y") ||
+                                         timeText.Contains("天") || timeText.Contains("週") || timeText.Contains("周") || timeText.Contains("年"));
+
+                if (!isWithin24Hours)
+                {
+                    // 若想讓畫面乾淨點，這行 Console.WriteLine 可以註解掉
+                    Console.WriteLine($"[DEBUG] 非 24 小時內貼文，跳過 | 時間: {timeText}");
+                    continue;
+                }
 
                 // 檢查是否包含關鍵字
                 bool hasKeyword = keywords.Any(k => content.Contains(k));
@@ -172,6 +198,10 @@ class Program
                     existingUrls.Add(postUrl);
                     count++;
                     Console.WriteLine($"✅ 成功存入新貼文: {postUrl}");
+                }
+                else
+                {
+                    //Console.WriteLine($"[DEBUG] 股票代號不足 (找到 {stocks.Count} 個)，跳過: {postUrl}");
                 }
             }
 
