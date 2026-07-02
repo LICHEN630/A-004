@@ -61,9 +61,74 @@
             animation: blink 1.5s infinite;
             transition: background-color 0.5s;
         }
+        /* 新增：懸浮免責聲明樣式 */
+        .sticky-disclaimer {
+            position: sticky;
+            top: 0;
+            z-index: 1050;
+            background-color: #fff3cd;
+            border-bottom: 2px solid #ffc107;
+            padding: 10px 20px;
+            text-align: center;
+            font-weight: bold;
+            color: #856404;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .fomo-fire {
+            color: #ff4500;
+            font-size: 1.1rem;
+        }
+
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+
+            th.sortable:hover {
+                background-color: #e9ecef;
+            }
+
+        .sort-icon {
+            margin-left: 5px;
+            font-size: 0.9em;
+            color: #999;
+        }
+
+        .scan-result-tags .badge {
+            font-size: 0.8rem;
+            margin-bottom: 2px;
+            display: inline-block;
+        }
+        /* 新增風險警示背景色與閃爍動畫 */
+        @keyframes blink {
+            0% {
+                border-color: red;
+            }
+
+            50% {
+                border-color: transparent;
+            }
+
+            100% {
+                border-color: red;
+            }
+        }
+
+        .risk-alert {
+            background-color: #fff0f0 !important;
+            border: 2px solid red;
+            animation: blink 1.5s infinite;
+            transition: background-color 0.5s;
+        }
     </style>
 </head>
 <body class="bg-light">
+    <!-- 新增：懸浮免責聲明區塊 -->
+    <div class="sticky-disclaimer">
+        <i class="fas fa-exclamation-triangle"></i> 投資有賺有賠，請謹慎選擇，所有問題/事件一律不負責
+    </div>
 
     <div class="container-fluid px-4 mt-4">
         <h1>股價追蹤</h1>
@@ -285,25 +350,25 @@
                 }).join('') || '<span class="text-muted small">無特別話術</span>';
 
                 return `
-                        <tr>
-                            <td class="align-middle"><strong>${row.id}</strong></td>
-                            <td class="align-middle">${row.name}</td>
-                            <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
-                            <td class="align-middle">${fireIcons}</td>
-                            <td class="align-middle">${tagBadges}</td>
-                            <!-- 【新增】：技術面風險掃描按鈕與容器 -->
-                            <td class="align-middle scan-container" id="risk-cell-${row.id}">
-                                <button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">
-                                    <i class="fas fa-search-dollar"></i> 掃描
-                                </button>
-                            </td>
-                            <td class="align-middle">
-                                <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
-                                    <i class="fas fa-chart-line"></i> 檢視
-                                </button>
-                            </td>
-                        </tr>
-                    `;
+                            <tr>
+                                <td class="align-middle"><strong>${row.id}</strong></td>
+                                <td class="align-middle">${row.name}</td>
+                                <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
+                                <td class="align-middle">${fireIcons}</td>
+                                <td class="align-middle">${tagBadges}</td>
+                                <!-- 【新增】：技術面風險掃描按鈕與容器 -->
+                                <td class="align-middle scan-container" id="risk-cell-${row.id}">
+                                    <button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">
+                                        <i class="fas fa-search-dollar"></i> 掃描
+                                    </button>
+                                </td>
+                                <td class="align-middle">
+                                    <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
+                                        <i class="fas fa-chart-line"></i> 檢視
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
             }).join('');
         }
 
