@@ -13,7 +13,7 @@
             color: #ff4500;
             font-size: 1.1rem;
         }
-        /* 【新增】：排序表頭的樣式 */
+
         th.sortable {
             cursor: pointer;
             user-select: none;
@@ -30,12 +30,36 @@
             color: #999;
         }
 
-        th.sortable.active-asc .sort-icon {
-            color: #007bff;
+        .scan-result-tags .badge {
+            font-size: 0.8rem;
+            margin-bottom: 2px;
+            display: inline-block;
+        }
+        /* 【標記修改】：新增風險警示背景色樣式 */
+        .risk-alert {
+            background-color: #fff0f0 !important;
+            transition: background-color 0.5s;
+        }
+        /* 新增風險警示背景色與閃爍動畫 */
+        @keyframes blink {
+            0% {
+                border-color: red;
+            }
+
+            50% {
+                border-color: transparent;
+            }
+
+            100% {
+                border-color: red;
+            }
         }
 
-        th.sortable.active-desc .sort-icon {
-            color: #007bff;
+        .risk-alert {
+            background-color: #fff0f0 !important;
+            border: 2px solid red;
+            animation: blink 1.5s infinite;
+            transition: background-color 0.5s;
         }
     </style>
 </head>
@@ -58,17 +82,18 @@
                         <table class="table table-hover">
                             <thead class="thead-light">
                                 <tr>
-                                    <!-- 【新增】：為表頭加上 data-sort 屬性來識別排序欄位 -->
                                     <th class="sortable" data-sort="id">股票代號 <i class="fas fa-sort sort-icon"></i></th>
                                     <th class="sortable" data-sort="name">股票名稱 <i class="fas fa-sort sort-icon"></i></th>
                                     <th class="sortable active-desc" data-sort="count">提及次數 <i class="fas fa-sort-down sort-icon"></i></th>
                                     <th class="sortable" data-sort="hypeScore">FOMO 煽動指數 <i class="fas fa-sort sort-icon"></i></th>
                                     <th>出現話術</th>
+                                    <!-- 【新增】：技術面風險欄位 -->
+                                    <th>技術面風險 (AI掃描)</th>
                                     <th>K線圖</th>
                                 </tr>
                             </thead>
                             <tbody id="stock-stats-body">
-                                <tr><td colspan="6" class="text-center">正在從資料庫撈取統計資料...</td></tr>
+                                <tr><td colspan="7" class="text-center">正在從資料庫撈取統計資料...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -120,11 +145,9 @@
         const db = getFirestore(app);
 
         let stockNameMap = null;
-
-        // 【新增】：用於儲存表格資料與目前排序狀態的全域變數
         let tableData = [];
-        let currentSort = { column: 'count', order: 'desc' }; // 預設依提及次數降冪
-        const bearWords = ["下車", "快逃", "割韭菜", "出清", "跌停", "先別碰"]; // 提升作用域供 render 使用
+        let currentSort = { column: 'count', order: 'desc' };
+        const bearWords = ["下車", "快逃", "割韭菜", "出清", "跌停", "先別碰"];
 
         async function fetchStockNames() {
             if (stockNameMap) return stockNameMap;
@@ -145,10 +168,9 @@
             }
         }
 
-        // --- 讀取統計資料並存入 tableData ---
         async function loadStockStats() {
             const tbody = document.querySelector("#stock-stats-body");
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center">正在從資料庫與 API 撈取資料...</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="7" class="text-center">正在從資料庫與 API 撈取資料...</td></tr>`;
             try {
                 const [querySnapshot, nameMap] = await Promise.all([
                     getDocs(collection(db, "threads_tips")),
@@ -159,21 +181,16 @@
                 const hypeWords = ["上車", "買爆", "閉眼買", "閉眼入", "會漲停", "會大漲", "繼續抱", "噴出", "發財",
                     "還要漲", "即推大爆發", "買必賺", "不是極限", "買爆它", "趕緊買入", "不是極限", "還會漲", "會漲噴"];
 
-                // 【新增】：設定 14 天的時間過濾門檻 (只統計 14 天內的貼文)
                 const cutoffDate = new Date();
                 cutoffDate.setDate(cutoffDate.getDate() - 10);
 
                 querySnapshot.forEach((doc) => {
                     const data = doc.data();
 
-                    // 【新增】：過濾 14 天以上的歷史資料
                     if (data.crawl_time) {
-                        // 判斷 crawl_time 是 Firestore 的 Timestamp 格式，將其轉換為 JS Date 物件
                         const postDate = typeof data.crawl_time.toDate === 'function' ? data.crawl_time.toDate() : new Date(data.crawl_time);
-
-                        // 如果文章爬取時間比 14 天前 (cutoffDate) 還早，就直接跳過不統計
                         if (postDate < cutoffDate) {
-                            return; // forEach 中的 return 相當於跳過這一筆 (continue)
+                            return;
                         }
                     }
 
@@ -202,41 +219,38 @@
                     }
                 });
 
-                // 【修改】：將資料轉換成易於排序的陣列物件
-                tableData = Object.entries(stats).map(([stock, data]) => {
-                    return {
-                        id: stock,
-                        name: nameMap[stock] || '未知名稱',
-                        count: data.count,
-                        hypeScore: data.hypeScore,
-                        tags: Array.from(data.tags)
-                    };
-                });
+                tableData = Object.entries(stats)
+                    .filter(([stock, data]) => nameMap[stock])
+                    .map(([stock, data]) => {
+                        return {
+                            id: stock,
+                            name: nameMap[stock],
+                            count: data.count,
+                            hypeScore: data.hypeScore,
+                            tags: Array.from(data.tags)
+                        };
+                    });
 
-                // 呼叫渲染函式 (裡面包含了排序邏輯)
                 renderTable();
 
             } catch (e) {
                 console.error("讀取資料失敗:", e);
-                tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">讀取失敗，請檢查資料庫權限或連線設定。</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">讀取失敗，請檢查資料庫權限或連線設定。</td></tr>`;
             }
         }
 
-        // 【新增】：渲染表格的獨立函式
         function renderTable() {
             const tbody = document.querySelector("#stock-stats-body");
 
             if (tableData.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" class="text-center">目前沒有熱門股票紀錄。</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center">目前沒有熱門股票紀錄。</td></tr>`;
                 return;
             }
 
-            // 1. 執行排序
             tableData.sort((a, b) => {
                 let valA = a[currentSort.column];
                 let valB = b[currentSort.column];
 
-                // 針對文字型態與數字型態防呆
                 if (typeof valA === 'string') valA = valA.toString().toLowerCase();
                 if (typeof valB === 'string') valB = valB.toString().toLowerCase();
 
@@ -245,11 +259,10 @@
                 return 0;
             });
 
-            // 【新增】：自定義火焰分數區間轉換函式
             function getFireIconCount(score) {
                 if (score === 0) return 0;
-                if (score >= 1 && score <= 5) return 1;  
-                if (score >= 6 && score <= 10) return 2; 
+                if (score >= 1 && score <= 5) return 1;
+                if (score >= 6 && score <= 10) return 2;
                 if (score >= 11 && score <= 15) return 3;
                 if (score >= 15 && score <= 20) return 4;
                 if (score >= 20 && score <= 25) return 5;
@@ -260,13 +273,10 @@
                 return 10;
             }
 
-            // 2. 產生 HTML
-
             tbody.innerHTML = tableData.map(row => {
-                // 【修改】：使用自定義的區間函式來決定火焰數量，並在旁邊附上實際分數
                 const fireCount = getFireIconCount(row.hypeScore);
                 const fireIcons = fireCount > 0
-                    ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(fireCount) + `<span class="ml-2 font-weight-bold text-danger small"></span>`
+                    ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(fireCount)
                     : '<span class="text-muted">-</span>';
 
                 const tagBadges = row.tags.map(tag => {
@@ -275,47 +285,49 @@
                 }).join('') || '<span class="text-muted small">無特別話術</span>';
 
                 return `
-                    <tr>
-                        <td class="align-middle"><strong>${row.id}</strong></td>
-                        <td class="align-middle">${row.name === '未知名稱' ? '<span class="text-muted small">未知名稱</span>' : row.name}</td>
-                        <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
-                        <td class="align-middle">${fireIcons}</td>
-                        <td class="align-middle">${tagBadges}</td>
-                        <td class="align-middle">
-                            <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
-                                <i class="fas fa-chart-line"></i> 檢視
-                            </button>
-                        </td>
-                    </tr>
-                `;
+                        <tr>
+                            <td class="align-middle"><strong>${row.id}</strong></td>
+                            <td class="align-middle">${row.name}</td>
+                            <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
+                            <td class="align-middle">${fireIcons}</td>
+                            <td class="align-middle">${tagBadges}</td>
+                            <!-- 【新增】：技術面風險掃描按鈕與容器 -->
+                            <td class="align-middle scan-container" id="risk-cell-${row.id}">
+                                <button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">
+                                    <i class="fas fa-search-dollar"></i> 掃描
+                                </button>
+                            </td>
+                            <td class="align-middle">
+                                <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
+                                    <i class="fas fa-chart-line"></i> 檢視
+                                </button>
+                            </td>
+                        </tr>
+                    `;
             }).join('');
         }
 
-        // 【新增】：綁定表頭排序點擊事件
         document.querySelectorAll('th.sortable').forEach(th => {
             th.addEventListener('click', () => {
                 const column = th.getAttribute('data-sort');
 
-                // 切換排序狀態
                 if (currentSort.column === column) {
                     currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
                 } else {
                     currentSort.column = column;
-                    currentSort.order = 'desc'; // 換新欄位時，預設先由大到小排
+                    currentSort.order = 'desc';
                 }
 
-                // 更新表頭 UI (更換圖示)
                 document.querySelectorAll('th.sortable').forEach(header => {
                     header.classList.remove('active-asc', 'active-desc');
                     const icon = header.querySelector('.sort-icon');
-                    icon.className = 'fas fa-sort sort-icon'; // 恢復預設
+                    icon.className = 'fas fa-sort sort-icon';
                 });
 
                 th.classList.add(currentSort.order === 'asc' ? 'active-asc' : 'active-desc');
                 const activeIcon = th.querySelector('.sort-icon');
                 activeIcon.className = currentSort.order === 'asc' ? 'fas fa-sort-up sort-icon text-primary' : 'fas fa-sort-down sort-icon text-primary';
 
-                // 重新渲染畫面
                 renderTable();
             });
         });
@@ -323,7 +335,83 @@
         $('#stock_market_news-tab').on('shown.bs.tab', loadStockStats);
         loadStockStats();
 
-        // --- K線圖查詢邏輯 ---
+        // 【標記修改】：新增快取物件，避免重複請求
+        const scanCache = {};
+
+        // 【標記修改】：升級後的 AI 技術掃描函式
+        window.runTechnicalScan = async function (stockNo, cellElement) {
+            if (scanCache[stockNo]) {
+                cellElement.innerHTML = scanCache[stockNo];
+                return;
+            }
+            const rowElement = cellElement.closest('tr');
+            cellElement.innerHTML = `<span class="spinner-border spinner-border-sm text-warning"></span> 掃描中...`;
+
+            try {
+                // 擴大範圍至 30 天以計算乖離與成交量均值
+                const d = new Date(); d.setDate(d.getDate() - 30);
+                const apiUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${stockNo}&start_date=${d.toISOString().split('T')[0]}`;
+                const res = await fetch(apiUrl);
+                const json = await res.json();
+
+                const data = json.data;
+                const last = data[data.length - 1];
+                const prev = data[data.length - 2];
+
+                // 1. 計算乖離率 (BIAS)
+                const ma10 = data.slice(-10).reduce((a, c) => a + c.close, 0) / 10;
+                const bias = ((last.close - ma10) / ma10) * 100;
+
+                // 2. 計算成交量異常 (爆量：今日量 > 近5日平均量 * 2)
+                const avgVol5 = data.slice(-6, -1).reduce((a, c) => a + c.Trading_Volume, 0) / 5;
+                const isVolumeExploded = last.Trading_Volume > (avgVol5 * 2);
+
+                let tagsHtml = "";
+                let isDanger = false;
+
+                if (bias > 15) { tagsHtml += `<span class="badge badge-danger">乖離率過高(${bias.toFixed(1)}%)</span><br>`; isDanger = true; }
+                if (isVolumeExploded) { tagsHtml += `<span class="badge badge-warning text-dark">⚠️ 成交爆量</span><br>`; }
+                if (last.open > prev.close && last.close < last.open) tagsHtml += `<span class="badge badge-success">開高走低出貨</span><br>`;
+
+                // 3. 連漲天數計算
+                let upDays = 0;
+                for (let i = data.length - 1; i > 0; i--) { if (data[i].close > data[i - 1].close) upDays++; else break; }
+                if (upDays >= 3) { tagsHtml += `<span class="badge badge-danger">連漲${upDays}天!</span><br>`; isDanger = true; }
+
+                if (isDanger) rowElement.classList.add('risk-alert'); // 觸發背景色變化
+
+                scanCache[stockNo] = tagsHtml || '<span class="text-muted small">無明顯風險</span>';
+                cellElement.innerHTML = `<div class="scan-result-tags">${scanCache[stockNo]}</div>`;
+            } catch (e) {
+                cellElement.innerHTML = `<span class="text-danger small">掃描失敗</span>`;
+            }
+        };
+
+        // 綁定動態生成的按鈕事件 (包含「檢視」與「掃描」)
+        document.querySelector("#stock-stats-body").addEventListener('click', function (e) {
+
+            // 處理「K線檢視」按鈕
+            const viewBtn = e.target.closest('.view-kline-btn');
+            if (viewBtn) {
+                const stockNo = viewBtn.getAttribute('data-stock');
+                document.getElementById('stock-input').value = stockNo;
+                isFirstTime = false;
+                $('#kline-tab').tab('show');
+                searchAndRenderKLine();
+                return;
+            }
+
+            // 處理「風險掃描」按鈕
+            const scanBtn = e.target.closest('.btn-scan-risk');
+            if (scanBtn) {
+                const stockNo = scanBtn.getAttribute('data-stock');
+                const cellId = `risk-cell-${stockNo}`;
+                const cellElement = document.getElementById(cellId);
+                runTechnicalScan(stockNo, cellElement);
+            }
+        });
+
+        // --- K線圖查詢邏輯 (保持不變) ---
         let currentChart = null;
 
         async function searchAndRenderKLine() {
@@ -369,15 +457,14 @@
                     series: [{ name: 'K線', type: 'candlestick', data: formattedData }],
                     chart: { type: 'candlestick', height: 400 },
                     xaxis: { type: 'datetime' },
-                    // 【關鍵修改】：將外國的綠漲紅跌改為台股的紅漲綠跌
                     plotOptions: {
                         candlestick: {
                             colors: {
-                                upward: '#dc3545',   // Bootstrap 的危險紅 (表示上漲)
-                                downward: '#28a745'  // Bootstrap 的成功綠 (表示下跌)
+                                upward: '#dc3545',
+                                downward: '#28a745'
                             },
                             wick: {
-                                useFillColor: true   // 引線顏色與實體顏色一致
+                                useFillColor: true
                             }
                         }
                     }
@@ -410,17 +497,6 @@
             if (isFirstTime) {
                 searchAndRenderKLine();
                 isFirstTime = false;
-            }
-        });
-
-        document.querySelector("#stock-stats-body").addEventListener('click', function (e) {
-            const btn = e.target.closest('.view-kline-btn');
-            if (btn) {
-                const stockNo = btn.getAttribute('data-stock');
-                document.getElementById('stock-input').value = stockNo;
-                isFirstTime = false;
-                $('#kline-tab').tab('show');
-                searchAndRenderKLine();
             }
         });
 
