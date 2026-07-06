@@ -72,10 +72,10 @@ class Program
 
         List<string> keywords = new List<string> {
             "可以買","閉眼買","閉眼入","會漲停","會有驚喜","我的建議",
-            "今天的散戶","明天的散戶","台股","漲停","飆股","獲利","上車","散戶","報牌","因為我不缺錢",
-            "買在起漲點","賣在高峰處"
+            "今天的散戶","明天的散戶","買在無人問津處","漲停","賣在人聲鼎沸時","獲利","上車","散戶","報牌","因為我不缺錢",
+            "買在起漲點","賣在高峰處","甜甜價","落袋"
         };
-        int minStockCount = 2;
+        int minStockCount = 1;
 
         try
         {
@@ -120,10 +120,10 @@ class Program
                 }
 
                 // 向下捲動抓取資料
-                for (int i = 0; i < 40; i++)
+                for (int i = 0; i < 30; i++)
                 {
                     await page.EvaluateAsync("window.scrollTo(0, document.body.scrollHeight)");
-                    await Task.Delay(7000);
+                    await Task.Delay(4000);
                 }
 
                 // 抓取當前頁面資料 (加回時間標籤的擷取)
