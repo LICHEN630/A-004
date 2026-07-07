@@ -34,9 +34,9 @@
             transition: background-color 0.2s;
         }
 
-            th.sortable:hover {
-                background-color: #e9ecef;
-            }
+        th.sortable:hover {
+            background-color: #e9ecef;
+        }
 
         .sort-icon {
             margin-left: 5px;
@@ -108,6 +108,7 @@
                                     <th class="sortable" data-sort="name">股票名稱 <i class="fas fa-sort sort-icon"></i></th>
                                     <th class="sortable active-desc" data-sort="count">提及次數 <i class="fas fa-sort-down sort-icon"></i></th>
                                     <th class="sortable" data-sort="fomoIndex">FOMO 煽動指數 <i class="fas fa-sort sort-icon"></i></th>
+                                    <th class="sortable" data-sort="latestTimeMs">曾經出現時間(最新) <i class="fas fa-sort sort-icon"></i></th>
                                     <th>出現話術</th>
                                     <th>技術面風險 (AI掃描)</th>
                                     <th>K線圖</th>
@@ -230,7 +231,7 @@
 
         async function loadStockStats() {
             const tbody = document.querySelector("#stock-stats-body");
-            tbody.innerHTML = `<tr><td colspan="7" class="text-center">正在從資料庫與 API 撈取資料...</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center">正在從資料庫與 API 撈取資料...</td></tr>`;
             try {
                 const [querySnapshot, nameMap] = await Promise.all([
                     getDocs(collection(db, "threads_tips")),
@@ -246,9 +247,10 @@
 
                 querySnapshot.forEach((doc) => {
                     const data = doc.data();
+                    let postDate = null;
 
                     if (data.crawl_time) {
-                        const postDate = typeof data.crawl_time.toDate === 'function' ? data.crawl_time.toDate() : new Date(data.crawl_time);
+                        postDate = typeof data.crawl_time.toDate === 'function' ? data.crawl_time.toDate() : new Date(data.crawl_time);
                         if (postDate < cutoffDate) {
                             return;
                         }
@@ -260,9 +262,14 @@
                     if (stocks && Array.isArray(stocks)) {
                         stocks.forEach(stock => {
                             if (!stats[stock]) {
-                                stats[stock] = { count: 0, hypeScore: 0, tags: new Set() };
+                                stats[stock] = { count: 0, hypeScore: 0, tags: new Set(), latestTime: postDate };
                             }
                             stats[stock].count++;
+
+                            // 更新最新時間
+                            if (postDate && (!stats[stock].latestTime || postDate > stats[stock].latestTime)) {
+                                stats[stock].latestTime = postDate;
+                            }
 
                             hypeWords.forEach(word => {
                                 if (content.includes(word)) {
@@ -282,16 +289,32 @@
                 tableData = Object.entries(stats)
                     .filter(([stock, data]) => nameMap[stock])
                     .map(([stock, data]) => {
-                        // 計算 FOMO 比例 (總話術次數 / 總提及次數)
                         let fomoRatio = data.count > 0 ? (data.hypeScore / data.count).toFixed(2) : 0;
+
+                        // 格式化最新時間
+                        const timeObj = data.latestTime;
+                        let timeStr = '未知';
+                        let timeMs = 0;
+
+                        if (timeObj) {
+                            const y = timeObj.getFullYear();
+                            const m = (timeObj.getMonth() + 1).toString().padStart(2, '0');
+                            const d = timeObj.getDate().toString().padStart(2, '0');
+                            const h = timeObj.getHours().toString().padStart(2, '0');
+                            const min = timeObj.getMinutes().toString().padStart(2, '0');
+                            timeStr = `${y}/${m}/${d} ${h}:${min}`;
+                            timeMs = timeObj.getTime();
+                        }
 
                         return {
                             id: stock,
                             name: nameMap[stock],
                             count: data.count,
                             hypeScore: data.hypeScore,
-                            fomoIndex: parseFloat(fomoRatio), // 新增 fomoIndex
-                            tags: Array.from(data.tags)
+                            fomoIndex: parseFloat(fomoRatio),
+                            tags: Array.from(data.tags),
+                            latestTimeStr: timeStr,
+                            latestTimeMs: timeMs
                         };
                     });
 
@@ -299,7 +322,7 @@
 
             } catch (e) {
                 console.error("讀取資料失敗:", e);
-                tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">讀取失敗，請檢查資料庫權限或連線設定。</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">讀取失敗，請檢查資料庫權限或連線設定。</td></tr>`;
             }
         }
 
@@ -307,7 +330,7 @@
             const tbody = document.querySelector("#stock-stats-body");
 
             if (tableData.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="7" class="text-center">目前沒有熱門股票紀錄。</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="8" class="text-center">目前沒有熱門股票紀錄。</td></tr>`;
                 return;
             }
 
@@ -324,7 +347,6 @@
             });
 
             function getFireIconCount(score) {
-                // 因改為比例，門檻下調 (0.5 表示平均每篇文有半個煽動詞)
                 if (score === 0) return 0;
                 if (score <= 0.5) return 1;
                 if (score <= 1.0) return 2;
@@ -345,24 +367,25 @@
                 }).join('') || '<span class="text-muted small">無特別話術</span>';
 
                 return `
-                            <tr>
-                                <td class="align-middle"><strong>${row.id}</strong></td>
-                                <td class="align-middle">${row.name}</td>
-                                <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
-                                <td class="align-middle">${fireIcons}</td>
-                                <td class="align-middle">${tagBadges}</td>
-                                <td class="align-middle scan-container" id="risk-cell-${row.id}">
-                                    <button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">
-                                        <i class="fas fa-search-dollar"></i> 掃描
-                                    </button>
-                                </td>
-                                <td class="align-middle">
-                                    <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
-                                        <i class="fas fa-chart-line"></i> 檢視
-                                    </button>
-                                </td>
-                            </tr>
-                        `;
+                    <tr>
+                        <td class="align-middle"><strong>${row.id}</strong></td>
+                        <td class="align-middle">${row.name}</td>
+                        <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
+                        <td class="align-middle">${fireIcons}</td>
+                        <td class="align-middle text-muted small"><i class="far fa-clock"></i> ${row.latestTimeStr}</td>
+                        <td class="align-middle">${tagBadges}</td>
+                        <td class="align-middle scan-container" id="risk-cell-${row.id}">
+                            <button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">
+                                <i class="fas fa-search-dollar"></i> 掃描
+                            </button>
+                        </td>
+                        <td class="align-middle">
+                            <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
+                                <i class="fas fa-chart-line"></i> 檢視
+                            </button>
+                        </td>
+                    </tr>
+                `;
             }).join('');
         }
 
@@ -391,7 +414,7 @@
             });
         });
 
-        $('#stock_market_news-tab').on('shown.bs.tab', loadStockStats);
+        // 載入初始表格資料
         loadStockStats();
 
         const scanCache = {};
@@ -413,7 +436,7 @@
             $('#systemModal').modal('show');
         };
 
-        // 升級版掃描：加入 FOMO 指數與成交量的交叉分析
+        // 升級版技術掃描
         window.runTechnicalScan = async function (stockNo, cellElement, currentFomoIndex) {
             if (scanCache[stockNo]) {
                 cellElement.innerHTML = scanCache[stockNo];
@@ -440,7 +463,6 @@
                 const last = data[data.length - 1];
                 const prev = data[data.length - 2];
 
-                // 1. 計算均線與乖離率 (BIAS)
                 const getMA = (days, offset = 0) => {
                     const slice = data.slice(-days - offset, data.length - offset);
                     return slice.reduce((a, c) => a + c.close, 0) / slice.length;
@@ -453,11 +475,9 @@
 
                 const bias = ((last.close - ma10) / ma10) * 100;
 
-                // 2. 計算成交量異常 (爆量：今日量 > 近5日平均量 * 2)
                 const avgVol5 = data.slice(-6, -1).reduce((a, c) => a + c.Trading_Volume, 0) / 5;
                 const isVolumeExploded = last.Trading_Volume > (avgVol5 * 2);
 
-                // 計算連漲天數 (upDays)
                 let upDays = 0;
                 for (let i = data.length - 1; i > 0; i--) {
                     if (data[i].close > data[i - 1].close) upDays++;
@@ -467,20 +487,16 @@
                 let tagsHtml = "";
                 let isDanger = false;
 
-                // === 【新增】正向/安全指標掃描 ===
-                // 1. 多頭排列 (趨勢向上，且收盤價站上均線)
+                // === 正向/安全指標掃描 ===
                 if (ma5 > ma10 && ma10 > ma20 && last.close > ma5) {
                     tagsHtml += `<span class="badge badge-success">📈 多頭排列 (趨勢偏多)</span><br>`;
                 }
-                // 2. 黃金交叉 (5日均線剛向上突破10日均線)
                 if (prevMa5 <= prevMa10 && ma5 > ma10) {
                     tagsHtml += `<span class="badge badge-success">✨ 5日線金叉10日線</span><br>`;
                 }
-                // 3. 超跌反彈契機 (乖離率極度偏負)
                 if (bias < -10) {
                     tagsHtml += `<span class="badge badge-success">🟢 超跌反彈 (乖離率 ${bias.toFixed(1)}%)</span><br>`;
                 }
-                // 4. 底部長下影線 (當日買盤支撐強勁，且處於相對低檔)
                 const lowerShadow = Math.min(last.open, last.close) - last.min;
                 const body = Math.abs(last.close - last.open);
                 const upperShadow = last.max - Math.max(last.open, last.close);
@@ -488,13 +504,12 @@
                     tagsHtml += `<span class="badge badge-success">🛡️ 底部長下影 (買盤支撐)</span><br>`;
                 }
 
-                // === 【原有】風險警示指標掃描 ===
+                // === 風險警示指標掃描 ===
                 if (bias > 15) {
                     tagsHtml += `<span class="badge badge-danger">乖離率過高(${bias.toFixed(1)}%)</span><br>`;
                     isDanger = true;
                 }
 
-                // 交叉檢測：爆量且 FOMO 指數異常高 (比例大於 1.0 即視為高風險)
                 if (isVolumeExploded && currentFomoIndex >= 1.0) {
                     tagsHtml += `<span class="badge badge-danger" title="極度高風險，主力恐大量出貨">🚨 主力出貨警示</span><br>`;
                     isDanger = true;
@@ -502,30 +517,25 @@
                     tagsHtml += `<span class="badge badge-warning text-dark">⚠️ 成交爆量</span><br>`;
                 }
 
-                // 連漲判斷
                 if (upDays >= 3) {
                     tagsHtml += `<span class="badge badge-danger">🔴 連漲 ${upDays} 天 (追高風險)</span><br>`;
                     isDanger = true;
                 }
 
-                // 跳空開高判斷
                 if (last.open > prev.close) {
                     tagsHtml += `<span class="badge badge-danger">🔴 跳空開高</span><br>`;
                 }
 
-                // 開高走低判斷
                 if (last.close < last.open) {
-                    tagsHtml += `<span class="badge badge-danger">🔴 開高走低 (當心出貨!)</span><br>`;
+                    tagsHtml += `<span class="badge badge-success">🟢 開高走低 (當心出貨!)</span><br>`;
                     isDanger = true;
                 }
 
-                // 近期漲停 (主力拉抬) - 漲幅接近 9.5%
                 if (last.close >= prev.close * 1.095) {
                     tagsHtml += `<span class="badge badge-danger">🔴 近期漲停 (主力拉抬)</span><br>`;
                     isDanger = true;
                 }
 
-                // 近期盤整 (近5日高低區間小於 3% 且近期無爆量)
                 const last5 = data.slice(-5);
                 const max5 = Math.max(...last5.map(d => d.max));
                 const min5 = Math.min(...last5.map(d => d.min));
@@ -533,7 +543,6 @@
                     tagsHtml += `<span class="badge badge-info">🔵 近期盤整</span><br>`;
                 }
 
-                // 如果符合危險條件，就讓整行閃爍警告
                 if (isDanger) rowElement.classList.add('risk-alert');
 
                 scanCache[stockNo] = tagsHtml || '<span class="text-muted small">中性 (無明顯警示或強勢訊號)</span>';
@@ -560,7 +569,6 @@
                 const cellId = `risk-cell-${stockNo}`;
                 const cellElement = document.getElementById(cellId);
 
-                // 找出該筆股票的 fomoIndex 進行交叉比對
                 const stockData = tableData.find(item => item.id === stockNo);
                 const currentFomoIndex = stockData ? stockData.fomoIndex : 0;
 
