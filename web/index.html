@@ -191,7 +191,12 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import {
+            getFirestore, collection, getDocs,
+            initializeFirestore,
+            persistentLocalCache,
+            persistentMultipleTabManager
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAcbmKq907jBvdlkHygS0JgK1hy0IdDTqs",
@@ -203,7 +208,14 @@
         };
 
         const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
+        //const db = getFirestore(app);
+        // 【核心修改】：初始化 Firestore，加入穩定性配置
+        const db = initializeFirestore(app, {
+            localCache: persistentLocalCache({
+                tabManager: persistentMultipleTabManager()
+            }),
+            // 此處預設會優先嘗試較穩定的連接方式
+        });
 
         let stockNameMap = null;
         let tableData = [];
