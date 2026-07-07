@@ -146,6 +146,45 @@
         </div>
     </div>
 
+    <!-- 共用訊息 Modal -->
+    <div class="modal fade" id="systemModal" tabindex="-1" aria-labelledby="systemModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="systemModalLabel"><i class="fas fa-info-circle"></i> 系統提示</h5>
+                    <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body" id="systemModalBody">
+                    <!-- 訊息內容將透過 JS 動態插入 -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">關閉</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- K線圖專屬 Modal -->
+    <div class="modal fade" id="klineModal" tabindex="-1" aria-labelledby="klineModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title" id="klineModalLabel"><i class="fas fa-chart-line"></i> K線圖檢視</h5>
+                    <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="modal-chart-candlestick" style="min-height: 400px;">
+                        <!-- 圖表將在這裡渲染 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
 
@@ -306,24 +345,24 @@
                 }).join('') || '<span class="text-muted small">無特別話術</span>';
 
                 return `
-                        <tr>
-                            <td class="align-middle"><strong>${row.id}</strong></td>
-                            <td class="align-middle">${row.name}</td>
-                            <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
-                            <td class="align-middle">${fireIcons}</td>
-                            <td class="align-middle">${tagBadges}</td>
-                            <td class="align-middle scan-container" id="risk-cell-${row.id}">
-                                <button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">
-                                    <i class="fas fa-search-dollar"></i> 掃描
-                                </button>
-                            </td>
-                            <td class="align-middle">
-                                <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
-                                    <i class="fas fa-chart-line"></i> 檢視
-                                </button>
-                            </td>
-                        </tr>
-                    `;
+                            <tr>
+                                <td class="align-middle"><strong>${row.id}</strong></td>
+                                <td class="align-middle">${row.name}</td>
+                                <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
+                                <td class="align-middle">${fireIcons}</td>
+                                <td class="align-middle">${tagBadges}</td>
+                                <td class="align-middle scan-container" id="risk-cell-${row.id}">
+                                    <button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">
+                                        <i class="fas fa-search-dollar"></i> 掃描
+                                    </button>
+                                </td>
+                                <td class="align-middle">
+                                    <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
+                                        <i class="fas fa-chart-line"></i> 檢視
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
             }).join('');
         }
 
@@ -356,6 +395,23 @@
         loadStockStats();
 
         const scanCache = {};
+
+        // 共用 Modal 顯示函數
+        window.showModal = function (message, title = "系統提示", isError = false) {
+            document.getElementById('systemModalBody').innerHTML = message;
+            const modalHeader = document.querySelector('#systemModal .modal-header');
+            const modalTitle = document.getElementById('systemModalLabel');
+
+            if (isError) {
+                modalHeader.className = 'modal-header bg-danger text-white';
+                modalTitle.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${title}`;
+            } else {
+                modalHeader.className = 'modal-header bg-primary text-white';
+                modalTitle.innerHTML = `<i class="fas fa-info-circle"></i> ${title}`;
+            }
+
+            $('#systemModal').modal('show');
+        };
 
         // 升級版掃描：加入 FOMO 指數與成交量的交叉分析
         window.runTechnicalScan = async function (stockNo, cellElement, currentFomoIndex) {
@@ -493,10 +549,7 @@
             const viewBtn = e.target.closest('.view-kline-btn');
             if (viewBtn) {
                 const stockNo = viewBtn.getAttribute('data-stock');
-                document.getElementById('stock-input').value = stockNo;
-                isFirstTime = false;
-                $('#kline-tab').tab('show');
-                searchAndRenderKLine();
+                openKLineModal(stockNo);
                 return;
             }
 
@@ -514,6 +567,75 @@
                 runTechnicalScan(stockNo, cellElement, currentFomoIndex);
             }
         });
+
+        // --- K線圖 Modal 專用查詢邏輯 ---
+        let modalChart = null;
+
+        async function openKLineModal(stockNo) {
+            $('#klineModal').modal('show');
+
+            const container = document.querySelector("#modal-chart-candlestick");
+            const titleLabel = document.querySelector("#klineModalLabel");
+
+            titleLabel.innerHTML = `<i class="fas fa-chart-line"></i> 正在查詢 ${stockNo} 的資料...`;
+            container.innerHTML = `<div class="text-center my-5"><div class="spinner-border text-info" role="status"></div><p class="mt-2">連線至 FinMind API 載入中...</p></div>`;
+
+            try {
+                const d = new Date();
+                d.setDate(d.getDate() - 90);
+                const startDate = d.toISOString().split('T')[0];
+
+                const apiUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${stockNo}&start_date=${startDate}`;
+                const response = await fetch(apiUrl);
+                if (!response.ok) throw new Error("API 請求失敗，請稍後再試。");
+
+                const json = await response.json();
+
+                if (json.msg !== "success" || !json.data || json.data.length === 0) {
+                    throw new Error(`找不到代號 [${stockNo}] 的歷史資料，請確認代號是否為上市櫃股票。`);
+                }
+
+                const formattedData = json.data.map(item => ({
+                    x: new Date(item.date).getTime(),
+                    y: [item.open, item.max, item.min, item.close]
+                }));
+
+                let displayTitle = `股票代號：${stockNo}`;
+                if (stockNameMap && stockNameMap[stockNo]) {
+                    displayTitle = `${stockNameMap[stockNo]} (${stockNo})`;
+                }
+                titleLabel.innerHTML = `<i class="fas fa-chart-line"></i> ${displayTitle} (近90天走勢)`;
+
+                const options = {
+                    series: [{ name: 'K線', type: 'candlestick', data: formattedData }],
+                    chart: { type: 'candlestick', height: 400 },
+                    xaxis: { type: 'datetime' },
+                    plotOptions: {
+                        candlestick: {
+                            colors: {
+                                upward: '#dc3545',
+                                downward: '#28a745'
+                            },
+                            wick: {
+                                useFillColor: true
+                            }
+                        }
+                    }
+                };
+
+                container.innerHTML = "";
+
+                if (modalChart) modalChart.destroy();
+
+                modalChart = new ApexCharts(container, options);
+                modalChart.render();
+
+            } catch (error) {
+                console.error(error);
+                titleLabel.innerHTML = `<i class="fas fa-exclamation-triangle"></i> 查詢失敗`;
+                container.innerHTML = `<div class="alert alert-danger text-center mt-3"><h5>發生錯誤</h5>${error.message}</div>`;
+            }
+        }
 
         // --- K線圖查詢邏輯 ---
         let currentChart = null;
