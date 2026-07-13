@@ -227,7 +227,12 @@
             try {
                 const [querySnapshot, nameMap] = await Promise.all([getDocs(collection(db, "threads_tips")), fetchStockNames()]);
                 const stats = {};
-                const hypeWords = ["上車", "買爆", "閉眼買", "會漲停", "會大漲", "噴出", "發財", "買必賺"];
+                // 將您提到的詞語也加入字典中
+                const hypeWords = ["上車", "買爆", "閉眼買", "會漲停", "會大漲", "噴出", "發財", "買必賺", "可以買"];
+                const bearWords = ["下車", "快逃", "割韭菜", "出清", "跌停", "先別碰", "不要碰", "不要賣"];
+
+                // 定義多少字元以內算是「討論同一檔股票」(可依需求調整，25字大約是半句話的長度)
+                const PROXIMITY_LIMIT = 25; 
 
                 querySnapshot.forEach((doc) => {
                     const data = doc.data();
@@ -237,8 +242,44 @@
                         stocks.forEach(stock => {
                             if (!stats[stock]) stats[stock] = { count: 0, hypeScore: 0, tags: new Set() };
                             stats[stock].count++;
-                            hypeWords.forEach(word => { if (content.includes(word)) { stats[stock].hypeScore++; stats[stock].tags.add(word); } });
-                            bearWords.forEach(word => { if (content.includes(word)) stats[stock].tags.add(word); });
+
+                            const stockName = nameMap[stock] || "";
+
+                            let stockIndices = [];
+                            let idx = content.indexOf(stock);
+                            while (idx !== -1) { stockIndices.push(idx); idx = content.indexOf(stock, idx + 1); }
+
+                            if (stockName) {
+                                let nameIdx = content.indexOf(stockName);
+                                while (nameIdx !== -1) { stockIndices.push(nameIdx); nameIdx = content.indexOf(stockName, nameIdx + 1); }
+                            }
+
+                            // 檢查某個關鍵字是否在該股票的 PROXIMITY_LIMIT 距離內
+                            const checkProximity = (word) => {
+                                let wordIndices = [];
+                                let wIdx = content.indexOf(word);
+                                while (wIdx !== -1) { wordIndices.push(wIdx); wIdx = content.indexOf(word, wIdx + 1); }
+
+                                for (let sIdx of stockIndices) {
+                                    for (let wIdx of wordIndices) {
+                                        // 如果兩者的索引值差距小於設定的距離，判定為相關！
+                                        if (Math.abs(sIdx - wIdx) <= PROXIMITY_LIMIT) return true;
+                                    }
+                                }
+                                return false;
+                            };
+
+                            hypeWords.forEach(word => {
+                                if (checkProximity(word)) {
+                                    stats[stock].hypeScore++;
+                                    stats[stock].tags.add(word);
+                                }
+                            });
+                            bearWords.forEach(word => {
+                                if (checkProximity(word)) {
+                                    stats[stock].tags.add(word);
+                                }
+                            });
                         });
                     }
                 });
@@ -264,7 +305,7 @@
             });
 
             tbody.innerHTML = tableData.map(row => {
-                const fireIcons = row.fomoIndex > 0 ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(Math.min(5, Math.ceil(row.fomoIndex * 2))) + `<span class="ml-2 font-weight-bold text-danger small">(${row.fomoIndex})</span>` : '-';
+                const fireIcons = row.fomoIndex > 0 ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(Math.min(5, Math.ceil(row.fomoIndex * 3))) + `<span class="ml-2 font-weight-bold text-danger small">(${row.fomoIndex})</span>` : '-';
                 const tagBadges = row.tags.map(t => `<span class="badge ${bearWords.includes(t) ? 'badge-success' : 'badge-warning'} mr-1">${t}</span>`).join('');
 
                 return `<tr>
