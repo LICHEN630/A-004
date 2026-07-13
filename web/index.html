@@ -109,6 +109,7 @@
                                     <th class="sortable active-desc" data-sort="count">提及次數 <i class="fas fa-sort-down sort-icon"></i></th>
                                     <th class="sortable" data-sort="fomoIndex">FOMO 煽動指數 <i class="fas fa-sort sort-icon"></i></th>
                                     <th>出現話術</th>
+                                    <th>出現時間</th>
                                     <th>技術面風險 (AI掃描)</th>
                                     <th>K線圖</th>
                                 </tr>
@@ -265,12 +266,17 @@
             tbody.innerHTML = tableData.map(row => {
                 const fireIcons = row.fomoIndex > 0 ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(Math.min(5, Math.ceil(row.fomoIndex * 2))) + `<span class="ml-2 font-weight-bold text-danger small">(${row.fomoIndex})</span>` : '-';
                 const tagBadges = row.tags.map(t => `<span class="badge ${bearWords.includes(t) ? 'badge-success' : 'badge-warning'} mr-1">${t}</span>`).join('');
+
                 return `<tr>
-                    <td><strong>${row.id}</strong></td><td>${row.name}</td><td><span class="badge badge-primary">${row.count}</span></td>
-                    <td>${fireIcons}</td><td>${tagBadges || '-'}</td>
-                    <td id="risk-cell-${row.id}"><button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">掃描</button></td>
-                    <td><button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">檢視</button></td>
-                </tr>`;
+                        <td><strong>${row.id}</strong></td>
+                        <td>${row.name}</td>
+                        <td><span class="badge badge-primary">${row.count}</span></td>
+                        <td>${fireIcons}</td>
+                        <td>${tagBadges || '-'}</td>
+                        <td><button class="btn btn-sm btn-info btn-view-timestamps" data-stock="${row.id}">檢視時間</button></td>
+                        <td id="risk-cell-${row.id}"><button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">掃描</button></td>
+                        <td><button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">檢視</button></td>
+                    </tr>`;
             }).join('');
         }
 
@@ -394,7 +400,7 @@
                 }
 
                 if (last.close < last.open) {
-                    tagsHtml += `<span class="badge badge-success">🟢 開高走低 (當心出貨!)</span><br>`;
+                    tagsHtml += `<span class="badge badge-danger">🔴 開高走低 (當心出貨!)</span><br>`;
                     isDanger = true;
                 }
 
@@ -428,7 +434,13 @@
                 openKLineModal(stockNo);
                 return;
             }
-
+            //時間序列顯示按鈕
+            const timeBtn = e.target.closest('.btn-view-timestamps');
+            if (timeBtn) {
+                const stockNo = timeBtn.getAttribute('data-stock');
+                fetchMentionTimestamps(stockNo, timeBtn);
+                return;
+            }
             // 處理「風險掃描」按鈕
             const scanBtn = e.target.closest('.btn-scan-risk');
             if (scanBtn) {
@@ -600,6 +612,57 @@
                 isFirstTime = false;
             }
         });
+
+        async function fetchMentionTimestamps(stockNo, btnElement) {
+            btnElement.disabled = true;
+            btnElement.innerHTML = `<span class="spinner-border spinner-border-sm"></span> 查詢中...`;
+
+            try {
+                const querySnapshot = await getDocs(collection(db, "threads_tips"));
+                let timestamps = [];
+
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    if (data.mentioned_stocks && data.mentioned_stocks.includes(stockNo)) {
+                        let timeStr = data.crawl_time;
+                        let displayTime = "";
+
+                        if (timeStr) {
+                            // 如果是 Firestore 的 Timestamp 物件，轉換為 Date
+                            if (timeStr.toDate && typeof timeStr.toDate === 'function') {
+                                displayTime = timeStr.toDate().toLocaleString('zh-TW');
+                            }
+                            // 如果是字串，進行原本的處理
+                            else if (typeof timeStr === 'string') {
+                                const cleanDateStr = timeStr.replace(" [UTC+8]", "");
+                                const formattedStr = cleanDateStr.replace("年", "/").replace("月", "/").replace("日", "");
+                                const date = new Date(formattedStr);
+
+                                displayTime = !isNaN(date.getTime()) ? date.toLocaleString('zh-TW') : timeStr;
+                            } else {
+                                displayTime = String(timeStr);
+                            }
+                            timestamps.push(displayTime);
+                        }
+                    }
+                });
+
+                if (timestamps.length > 0) {
+                    const listHtml = `<ul class="list-unstyled" style="max-height: 300px; overflow-y: auto;">
+                ${timestamps.map(t => `<li><i class="fas fa-clock text-info"></i> ${t}</li>`).join('')}
+            </ul>`;
+                    window.showModal(listHtml, `${stockNo} 提及時間記錄`);
+                } else {
+                    window.showModal("查無相關時間記錄。", "提示");
+                }
+            } catch (e) {
+                console.error(e);
+                window.showModal("查詢發生錯誤，請稍後再試。", "錯誤", true);
+            } finally {
+                btnElement.disabled = false;
+                btnElement.innerHTML = `檢視時間`;
+            }
+        }
 
     </script>
 </body>
