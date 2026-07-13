@@ -108,7 +108,6 @@
                                     <th class="sortable" data-sort="name">股票名稱 <i class="fas fa-sort sort-icon"></i></th>
                                     <th class="sortable active-desc" data-sort="count">提及次數 <i class="fas fa-sort-down sort-icon"></i></th>
                                     <th class="sortable" data-sort="fomoIndex">FOMO 煽動指數 <i class="fas fa-sort sort-icon"></i></th>
-                                    <th class="sortable" data-sort="latestTimeMs">曾經出現時間(最新) <i class="fas fa-sort sort-icon"></i></th>
                                     <th>出現話術</th>
                                     <th>技術面風險 (AI掃描)</th>
                                     <th>K線圖</th>
@@ -191,12 +190,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import {
-            getFirestore, collection, getDocs,
-            initializeFirestore,
-            persistentLocalCache,
-            persistentMultipleTabManager
-        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAcbmKq907jBvdlkHygS0JgK1hy0IdDTqs",
@@ -204,18 +198,11 @@
             projectId: "ai-001-d64e3",
             storageBucket: "ai-001-d64e3.firebasestorage.app",
             messagingSenderId: "921394535619",
-            appId: "1:921394535619:web:9b95a5f0f3f709cc5dd676",
+            appId: "1:921394535619:web:9b95a5f0f3f709cc5dd676"
         };
 
         const app = initializeApp(firebaseConfig);
-        //const db = getFirestore(app);
-        // 【核心修改】：初始化 Firestore，加入穩定性配置
-        const db = initializeFirestore(app, {
-            localCache: persistentLocalCache({
-                tabManager: persistentMultipleTabManager()
-            }),
-            // 此處預設會優先嘗試較穩定的連接方式
-        });
+        const db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
 
         let stockNameMap = null;
         let tableData = [];
@@ -225,208 +212,76 @@
         async function fetchStockNames() {
             if (stockNameMap) return stockNameMap;
             try {
-                const response = await fetch('https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo');
-                const json = await response.json();
+                const res = await fetch('https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo');
+                const json = await res.json();
                 const map = {};
-                if (json.msg === "success" && json.data) {
-                    json.data.forEach(item => {
-                        map[item.stock_id] = item.stock_name;
-                    });
-                }
+                if (json.msg === "success" && json.data) json.data.forEach(item => map[item.stock_id] = item.stock_name);
                 stockNameMap = map;
                 return map;
-            } catch (error) {
-                console.error("載入股票名稱清單失敗:", error);
-                return {};
-            }
+            } catch { return {}; }
         }
 
         async function loadStockStats() {
             const tbody = document.querySelector("#stock-stats-body");
-            tbody.innerHTML = `<tr><td colspan="8" class="text-center">正在從資料庫與 API 撈取資料...</td></tr>`;
             try {
-                const [querySnapshot, nameMap] = await Promise.all([
-                    getDocs(collection(db, "threads_tips")),
-                    fetchStockNames()
-                ]);
-
+                const [querySnapshot, nameMap] = await Promise.all([getDocs(collection(db, "threads_tips")), fetchStockNames()]);
                 const stats = {};
-                const hypeWords = ["上車", "買爆", "閉眼買", "閉眼入", "會漲停", "會大漲", "繼續抱", "噴出", "發財",
-                    "還要漲", "即推大爆發", "買必賺", "不是極限", "買爆它", "趕緊買入", "不是極限", "還會漲", "會漲噴"];
-
-                const cutoffDate = new Date();
-                cutoffDate.setDate(cutoffDate.getDate() - 10);
+                const hypeWords = ["上車", "買爆", "閉眼買", "會漲停", "會大漲", "噴出", "發財", "買必賺"];
 
                 querySnapshot.forEach((doc) => {
                     const data = doc.data();
-                    let postDate = null;
-
-                    if (data.crawl_time) {
-                        postDate = typeof data.crawl_time.toDate === 'function' ? data.crawl_time.toDate() : new Date(data.crawl_time);
-                        if (postDate < cutoffDate) {
-                            return;
-                        }
-                    }
-
                     const stocks = data.mentioned_stocks;
                     const content = data.content || "";
-
                     if (stocks && Array.isArray(stocks)) {
                         stocks.forEach(stock => {
-                            if (!stats[stock]) {
-                                stats[stock] = { count: 0, hypeScore: 0, tags: new Set(), latestTime: postDate };
-                            }
+                            if (!stats[stock]) stats[stock] = { count: 0, hypeScore: 0, tags: new Set() };
                             stats[stock].count++;
-
-                            // 更新最新時間
-                            if (postDate && (!stats[stock].latestTime || postDate > stats[stock].latestTime)) {
-                                stats[stock].latestTime = postDate;
-                            }
-
-                            hypeWords.forEach(word => {
-                                if (content.includes(word)) {
-                                    stats[stock].hypeScore++;
-                                    stats[stock].tags.add(word);
-                                }
-                            });
-                            bearWords.forEach(word => {
-                                if (content.includes(word)) {
-                                    stats[stock].tags.add(word);
-                                }
-                            });
+                            hypeWords.forEach(word => { if (content.includes(word)) { stats[stock].hypeScore++; stats[stock].tags.add(word); } });
+                            bearWords.forEach(word => { if (content.includes(word)) stats[stock].tags.add(word); });
                         });
                     }
                 });
 
-                tableData = Object.entries(stats)
-                    .filter(([stock, data]) => nameMap[stock])
-                    .map(([stock, data]) => {
-                        let fomoRatio = data.count > 0 ? (data.hypeScore / data.count).toFixed(2) : 0;
-
-                        // 格式化最新時間
-                        const timeObj = data.latestTime;
-                        let timeStr = '未知';
-                        let timeMs = 0;
-
-                        if (timeObj) {
-                            const y = timeObj.getFullYear();
-                            const m = (timeObj.getMonth() + 1).toString().padStart(2, '0');
-                            const d = timeObj.getDate().toString().padStart(2, '0');
-                            const h = timeObj.getHours().toString().padStart(2, '0');
-                            const min = timeObj.getMinutes().toString().padStart(2, '0');
-                            timeStr = `${y}/${m}/${d} ${h}:${min}`;
-                            timeMs = timeObj.getTime();
-                        }
-
-                        return {
-                            id: stock,
-                            name: nameMap[stock],
-                            count: data.count,
-                            hypeScore: data.hypeScore,
-                            fomoIndex: parseFloat(fomoRatio),
-                            tags: Array.from(data.tags),
-                            latestTimeStr: timeStr,
-                            latestTimeMs: timeMs
-                        };
-                    });
-
+                tableData = Object.entries(stats).filter(([stock]) => nameMap[stock]).map(([stock, data]) => ({
+                    id: stock,
+                    name: nameMap[stock],
+                    count: data.count,
+                    fomoIndex: parseFloat(data.count > 0 ? (data.hypeScore / data.count).toFixed(2) : 0),
+                    tags: Array.from(data.tags)
+                }));
                 renderTable();
-
-            } catch (e) {
-                console.error("讀取資料失敗:", e);
-                tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">讀取失敗，請檢查資料庫權限或連線設定。</td></tr>`;
-            }
+            } catch (e) { tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">讀取失敗。</td></tr>`; }
         }
 
         function renderTable() {
             const tbody = document.querySelector("#stock-stats-body");
-
-            if (tableData.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="8" class="text-center">目前沒有熱門股票紀錄。</td></tr>`;
-                return;
-            }
-
             tableData.sort((a, b) => {
-                let valA = a[currentSort.column];
-                let valB = b[currentSort.column];
-
-                if (typeof valA === 'string') valA = valA.toString().toLowerCase();
-                if (typeof valB === 'string') valB = valB.toString().toLowerCase();
-
-                if (valA < valB) return currentSort.order === 'asc' ? -1 : 1;
-                if (valA > valB) return currentSort.order === 'asc' ? 1 : -1;
+                let vA = a[currentSort.column], vB = b[currentSort.column];
+                if (vA < vB) return currentSort.order === 'asc' ? -1 : 1;
+                if (vA > vB) return currentSort.order === 'asc' ? 1 : -1;
                 return 0;
             });
 
-            function getFireIconCount(score) {
-                if (score === 0) return 0;
-                if (score <= 0.5) return 1;
-                if (score <= 1.0) return 2;
-                if (score <= 1.5) return 3;
-                if (score <= 2.0) return 4;
-                return 5;
-            }
-
             tbody.innerHTML = tableData.map(row => {
-                const fireCount = getFireIconCount(row.fomoIndex);
-                const fireIcons = fireCount > 0
-                    ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(fireCount) + `<span class="ml-2 font-weight-bold text-danger small">(${row.fomoIndex})</span>`
-                    : '<span class="text-muted">-</span>';
-
-                const tagBadges = row.tags.map(tag => {
-                    const isBear = bearWords.includes(tag);
-                    return `<span class="badge ${isBear ? 'badge-success' : 'badge-warning text-dark'} mr-1">${tag}</span>`;
-                }).join('') || '<span class="text-muted small">無特別話術</span>';
-
-                return `
-                    <tr>
-                        <td class="align-middle"><strong>${row.id}</strong></td>
-                        <td class="align-middle">${row.name}</td>
-                        <td class="align-middle"><span class="badge badge-pill badge-primary">${row.count} 次</span></td>
-                        <td class="align-middle">${fireIcons}</td>
-                        <td class="align-middle text-muted small"><i class="far fa-clock"></i> ${row.latestTimeStr}</td>
-                        <td class="align-middle">${tagBadges}</td>
-                        <td class="align-middle scan-container" id="risk-cell-${row.id}">
-                            <button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">
-                                <i class="fas fa-search-dollar"></i> 掃描
-                            </button>
-                        </td>
-                        <td class="align-middle">
-                            <button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">
-                                <i class="fas fa-chart-line"></i> 檢視
-                            </button>
-                        </td>
-                    </tr>
-                `;
+                const fireIcons = row.fomoIndex > 0 ? `<i class="fas fa-fire fomo-fire"></i>`.repeat(Math.min(5, Math.ceil(row.fomoIndex * 2))) + `<span class="ml-2 font-weight-bold text-danger small">(${row.fomoIndex})</span>` : '-';
+                const tagBadges = row.tags.map(t => `<span class="badge ${bearWords.includes(t) ? 'badge-success' : 'badge-warning'} mr-1">${t}</span>`).join('');
+                return `<tr>
+                    <td><strong>${row.id}</strong></td><td>${row.name}</td><td><span class="badge badge-primary">${row.count}</span></td>
+                    <td>${fireIcons}</td><td>${tagBadges || '-'}</td>
+                    <td id="risk-cell-${row.id}"><button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">掃描</button></td>
+                    <td><button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">檢視</button></td>
+                </tr>`;
             }).join('');
         }
 
         document.querySelectorAll('th.sortable').forEach(th => {
             th.addEventListener('click', () => {
-                const column = th.getAttribute('data-sort');
-
-                if (currentSort.column === column) {
-                    currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
-                } else {
-                    currentSort.column = column;
-                    currentSort.order = 'desc';
-                }
-
-                document.querySelectorAll('th.sortable').forEach(header => {
-                    header.classList.remove('active-asc', 'active-desc');
-                    const icon = header.querySelector('.sort-icon');
-                    icon.className = 'fas fa-sort sort-icon';
-                });
-
-                th.classList.add(currentSort.order === 'asc' ? 'active-asc' : 'active-desc');
-                const activeIcon = th.querySelector('.sort-icon');
-                activeIcon.className = currentSort.order === 'asc' ? 'fas fa-sort-up sort-icon text-primary' : 'fas fa-sort-down sort-icon text-primary';
-
+                currentSort.column = th.getAttribute('data-sort');
+                currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
                 renderTable();
             });
         });
 
-        // 載入初始表格資料
         loadStockStats();
 
         const scanCache = {};
