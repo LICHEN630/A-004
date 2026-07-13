@@ -436,8 +436,12 @@
                     isDanger = true;
                 }
 
-                if (last.open > prev.close) {
+                if (last.open > prev.max) {
                     tagsHtml += `<span class="badge badge-danger">🔴 跳空開高</span><br>`;
+                }
+
+                if (last.min > prev.max) {
+                    tagsHtml += `<span class="badge badge-danger">🔴 向上跳空缺口</span><br>`;
                 }
 
                 if (last.close < last.open) {
