@@ -101,23 +101,25 @@
                     <div class="tab-pane fade show active" id="stock_market_news" role="tabpanel">
                         <h5 class="text-danger"><i class="fas fa-fire"></i> 社群熱門飆股統計</h5>
                         <p class="text-muted small">根據社群文章自動統計提及次數與煽動話術 (點擊表頭可排序)：</p>
-                        <table class="table table-hover">
-                            <thead class="thead-light">
-                                <tr>
-                                    <th class="sortable" data-sort="id">股票代號 <i class="fas fa-sort sort-icon"></i></th>
-                                    <th class="sortable" data-sort="name">股票名稱 <i class="fas fa-sort sort-icon"></i></th>
-                                    <th class="sortable active-desc" data-sort="count">提及次數 <i class="fas fa-sort-down sort-icon"></i></th>
-                                    <th class="sortable" data-sort="fomoIndex">FOMO 煽動指數 <i class="fas fa-sort sort-icon"></i></th>
-                                    <th>出現話術</th>
-                                    <th>出現時間</th>
-                                    <th>技術面風險 (AI掃描)</th>
-                                    <th>K線圖</th>
-                                </tr>
-                            </thead>
-                            <tbody id="stock-stats-body">
-                                <tr><td colspan="7" class="text-center">正在從資料庫撈取統計資料...</td></tr>
-                            </tbody>
-                        </table>
+                        <div class="table-responsive">
+                            <table class="table table-hover text-nowrap">
+                                <thead class="thead-light">
+                                    <tr>
+                                        <th class="sortable" data-sort="id">股票代號 <i class="fas fa-sort sort-icon"></i></th>
+                                        <th class="sortable" data-sort="name">股票名稱 <i class="fas fa-sort sort-icon"></i></th>
+                                        <th class="sortable active-desc" data-sort="count">提及次數 <i class="fas fa-sort-down sort-icon"></i></th>
+                                        <th class="sortable" data-sort="fomoIndex">FOMO 煽動指數 <i class="fas fa-sort sort-icon"></i></th>
+                                        <th>出現話術</th>
+                                        <th>出現時間</th>
+                                        <th>技術面風險 (AI掃描)</th>
+                                        <th>K線圖</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="stock-stats-body">
+                                    <tr><td colspan="7" class="text-center">正在從資料庫撈取統計資料...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
                     <div class="tab-pane fade" id="kline_view" role="tabpanel">
@@ -309,15 +311,15 @@
                 const tagBadges = row.tags.map(t => `<span class="badge ${bearWords.includes(t) ? 'badge-success' : 'badge-warning'} mr-1">${t}</span>`).join('');
 
                 return `<tr>
-                        <td><strong>${row.id}</strong></td>
-                        <td>${row.name}</td>
-                        <td><span class="badge badge-primary">${row.count}</span></td>
-                        <td>${fireIcons}</td>
-                        <td>${tagBadges || '-'}</td>
-                        <td><button class="btn btn-sm btn-info btn-view-timestamps" data-stock="${row.id}">檢視時間</button></td>
-                        <td id="risk-cell-${row.id}"><button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">掃描</button></td>
-                        <td><button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">檢視</button></td>
-                    </tr>`;
+                            <td><strong>${row.id}</strong></td>
+                            <td>${row.name}</td>
+                            <td><span class="badge badge-primary">${row.count}</span></td>
+                            <td>${fireIcons}</td>
+                            <td>${tagBadges || '-'}</td>
+                            <td><button class="btn btn-sm btn-info btn-view-timestamps" data-stock="${row.id}">檢視時間</button></td>
+                            <td id="risk-cell-${row.id}"><button class="btn btn-sm btn-outline-warning btn-scan-risk" data-stock="${row.id}">掃描</button></td>
+                            <td><button class="btn btn-sm btn-outline-info view-kline-btn" data-stock="${row.id}">檢視</button></td>
+                        </tr>`;
             }).join('');
         }
 
