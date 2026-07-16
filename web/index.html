@@ -233,20 +233,50 @@
                 const hypeWords = ["上車", "買爆", "閉眼買", "會漲停", "會大漲", "噴出", "發財", "買必賺", "可以買"];
                 const bearWords = ["下車", "快逃", "割韭菜", "出清", "跌停", "先別碰", "不要碰", "不要賣"];
 
-                // 定義多少字元以內算是「討論同一檔股票」(可依需求調整，25字大約是半句話的長度)
-                const PROXIMITY_LIMIT = 25; 
+                // === 演算法參數區 ===
+                const PROXIMITY_LIMIT = 20;              // 上下文距離判定 (多少字以內算作同一支股票的標籤)
+                const MAX_DAYS_TO_KEEP = 30;             // 超過 30 天的資料完全不計入
+                const TIME_DECAY_THRESHOLD_DAYS = 3;     // 超過 3 天的資料開始「衰減降權」
+                const DECAY_WEIGHT = 0.2;                // 衰減後的權重 (1次只當作 0.2 次)
+
+                const MIN_MENTIONS_TO_SHOW = 2;          // 門檻一：30天內總共低於 2 次視為雜訊，不顯示於表格
+                const MIN_MENTIONS_FOR_FOMO = 3;         // 門檻二：低於 3 次強制不給 FOMO 火焰
+                // =====================
+
+                const now = new Date();
 
                 querySnapshot.forEach((doc) => {
                     const data = doc.data();
                     const stocks = data.mentioned_stocks;
                     const content = data.content || "";
+
+                    // --- 判斷時間與加權權重 ---
+                    let postDate = now;
+                    if (data.crawl_time) {
+                        postDate = typeof data.crawl_time.toDate === 'function' ? data.crawl_time.toDate() : new Date(data.crawl_time);
+                    }
+                    const daysOld = (now - postDate) / (1000 * 60 * 60 * 24);
+
+                    if (daysOld > MAX_DAYS_TO_KEEP) return; // 略過超過 30 天的貼文
+
+                    // 根據天數決定這篇文章的權重
+                    const weight = daysOld <= TIME_DECAY_THRESHOLD_DAYS ? 1.0 : DECAY_WEIGHT;
+
                     if (stocks && Array.isArray(stocks)) {
                         stocks.forEach(stock => {
-                            if (!stats[stock]) stats[stock] = { count: 0, hypeScore: 0, tags: new Set() };
-                            stats[stock].count++;
+                            if (!stats[stock]) {
+                                // rawCount: 實際出現的絕對次數 (用於決定是否過濾)
+                                // weightedCount: 時間衰減後的次數 (用於算 FOMO 比例)
+                                // weightedHypeScore: 時間衰減後的煽動分數
+                                stats[stock] = { rawCount: 0, weightedCount: 0, weightedHypeScore: 0, tags: new Set() };
+                            }
+
+                            stats[stock].rawCount += 1;
+                            stats[stock].weightedCount += weight;
 
                             const stockName = nameMap[stock] || "";
 
+                            // 上下文鄰近定位
                             let stockIndices = [];
                             let idx = content.indexOf(stock);
                             while (idx !== -1) { stockIndices.push(idx); idx = content.indexOf(stock, idx + 1); }
@@ -256,7 +286,6 @@
                                 while (nameIdx !== -1) { stockIndices.push(nameIdx); nameIdx = content.indexOf(stockName, nameIdx + 1); }
                             }
 
-                            // 檢查某個關鍵字是否在該股票的 PROXIMITY_LIMIT 距離內
                             const checkProximity = (word) => {
                                 let wordIndices = [];
                                 let wIdx = content.indexOf(word);
@@ -264,7 +293,6 @@
 
                                 for (let sIdx of stockIndices) {
                                     for (let wIdx of wordIndices) {
-                                        // 如果兩者的索引值差距小於設定的距離，判定為相關！
                                         if (Math.abs(sIdx - wIdx) <= PROXIMITY_LIMIT) return true;
                                     }
                                 }
@@ -273,7 +301,7 @@
 
                             hypeWords.forEach(word => {
                                 if (checkProximity(word)) {
-                                    stats[stock].hypeScore++;
+                                    stats[stock].weightedHypeScore += weight; // 命中時，加上這篇文章的時間權重
                                     stats[stock].tags.add(word);
                                 }
                             });
@@ -286,15 +314,29 @@
                     }
                 });
 
-                tableData = Object.entries(stats).filter(([stock]) => nameMap[stock]).map(([stock, data]) => ({
-                    id: stock,
-                    name: nameMap[stock],
-                    count: data.count,
-                    fomoIndex: parseFloat(data.count > 0 ? (data.hypeScore / data.count).toFixed(2) : 0),
-                    tags: Array.from(data.tags)
-                }));
+
+                tableData = Object.entries(stats)
+                    .filter(([stock, data]) => nameMap[stock] && data.rawCount >= MIN_MENTIONS_TO_SHOW)
+                    .map(([stock, data]) => {
+                        let fomoRatio = 0;
+                        // 門檻二：絕對次數達標，才用「衰減過後的權重」去計算指數
+                        if (data.rawCount >= MIN_MENTIONS_FOR_FOMO && data.weightedCount > 0) {
+                            fomoRatio = (data.weightedHypeScore / data.weightedCount);
+                        }
+
+                        return {
+                            id: stock,
+                            name: nameMap[stock],
+                            count: data.rawCount, // 顯示給使用者看的依然是真實提及次數
+                            fomoIndex: parseFloat(fomoRatio.toFixed(2)),
+                            tags: Array.from(data.tags)
+                        };
+                    });
                 renderTable();
-            } catch (e) { tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">讀取失敗。</td></tr>`; }
+            } catch (e) {
+                console.error(e);
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger">讀取失敗，請確認網路連線。</td></tr>`;
+            }
         }
 
         function renderTable() {
