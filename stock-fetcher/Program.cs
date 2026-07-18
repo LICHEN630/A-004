@@ -73,12 +73,26 @@ class Program
         List<string> keywords = new List<string> {
             "可以買","閉眼買","閉眼入","會漲停","會有驚喜","我的建議",
             "今天的散戶","明天的散戶","買在無人問津處","漲停","賣在人聲鼎沸時","獲利","上車","散戶","報牌","因為我不缺錢",
-            "買在起漲點","賣在高峰處","甜甜價","落袋"
+            "買在起漲點","賣在高峰處","甜甜價","落袋","不要再買了"
         };
         int minStockCount = 1;
 
         try
         {
+            // 確保 logs 資料夾存在，否則會報錯
+            string folderPath = "bin";
+            if (!Directory.Exists(folderPath)) { Directory.CreateDirectory(folderPath); }
+
+            string csvPath = Path.Combine(folderPath, "keyword_stats.txt");
+
+            // 2. 如果檔案不存在，先寫入標頭 (Header)
+            if (!File.Exists(csvPath))
+            {
+                File.WriteAllText(csvPath, "關鍵字,日期,篇數數量\n");
+            }
+
+
+            // 預先取得現有 URL，避免重複儲存
             CollectionReference collectionRef = db.Collection("threads_tips");
             var existingDocs = await collectionRef.GetSnapshotAsync();
             HashSet<string> existingUrls = new HashSet<string>(existingDocs.Documents.Select(d => d.GetValue<string>("url")));
@@ -92,9 +106,9 @@ class Program
             });
 
             var page = await context.NewPageAsync();
-            var allCollectedPosts = new List<JsonElement>();
+            int totalSavedCount = 0;
 
-            // 針對每個關鍵字執行搜尋
+            // 針對每個關鍵字執行搜尋與處理
             foreach (var kw in keywords)
             {
                 Console.WriteLine($"\n--- 正在搜尋關鍵字: {kw} ---");
@@ -104,7 +118,6 @@ class Program
                 await page.WaitForSelectorAsync("div[data-pressable-container='true']", new PageWaitForSelectorOptions { Timeout = 15000 });
                 await Task.Delay(2000);
 
-                // 【優化點擊邏輯】：嘗試切換至「最近」標籤
                 Console.WriteLine("嘗試切換至「最近」標籤...");
                 try
                 {
@@ -120,13 +133,13 @@ class Program
                 }
 
                 // 向下捲動抓取資料
-                for (int i = 0; i < 30; i++)
+                for (int i = 0; i < 20; i++)
                 {
                     await page.EvaluateAsync("window.scrollTo(0, document.body.scrollHeight)");
-                    await Task.Delay(4000);
+                    await Task.Delay(2000);
                 }
 
-                // 抓取當前頁面資料 (加回時間標籤的擷取)
+                // 抓取當前頁面資料
                 var posts = await page.EvaluateAsync<JsonElement>(@"() => {
                     const results = [];
                     document.querySelectorAll('div[data-pressable-container=""true""]').forEach(art => {
@@ -143,70 +156,63 @@ class Program
                     return results;
                 }");
 
-                foreach (var item in posts.EnumerateArray()) allCollectedPosts.Add(item);
-            }
-
-            // 【篩選與儲存】
-            int count = 0;
-            // 去重處理
-            var uniquePosts = allCollectedPosts.GroupBy(p => p.GetProperty("post_url").GetString()).Select(g => g.First());
-
-            foreach (var post in uniquePosts)
-            {
-                string postUrl = post.GetProperty("post_url").GetString() ?? "";
-                string content = post.GetProperty("text_content").GetString() ?? "";
-                string timeText = post.GetProperty("time_text").GetString() ?? "";
-
-                // 1. 資料庫已儲存過的貼文直接跳過，不加入計算
-                if (string.IsNullOrEmpty(postUrl) || existingUrls.Contains(postUrl))
+                // 在迴圈內立即進行篩選與儲存
+                int kwSuccessCount = 0;
+                foreach (var post in posts.EnumerateArray())
                 {
-                    continue;
-                }
+                    string postUrl = post.GetProperty("post_url").GetString() ?? "";
+                    string content = post.GetProperty("text_content").GetString() ?? "";
+                    string timeText = post.GetProperty("time_text").GetString() ?? "";
 
-                // 2. 篩選 24 小時內的貼文
-                // Threads 時間格式包含 s(秒), m(分), h(時)。若包含 d(天), w(週) 則代表超過 24 小時。
-                bool isWithin24Hours = !string.IsNullOrEmpty(timeText) &&
-                                       (timeText.Contains("s") || timeText.Contains("m") || timeText.Contains("h") ||
-                                        timeText.Contains("秒") || timeText.Contains("分") || timeText.Contains("時")) &&
-                                       !(timeText.Contains("d") || timeText.Contains("w") || timeText.Contains("y") ||
-                                         timeText.Contains("天") || timeText.Contains("週") || timeText.Contains("周") || timeText.Contains("年"));
+                    // 1. 重複檢查
+                    if (string.IsNullOrEmpty(postUrl) || existingUrls.Contains(postUrl)) continue;
 
-                if (!isWithin24Hours)
-                {
-                    // 若想讓畫面乾淨點，這行 Console.WriteLine 可以註解掉
-                    Console.WriteLine($"[DEBUG] 非 24 小時內貼文，跳過 | 時間: {timeText}");
-                    continue;
-                }
+                    // 2. 時間篩選 (24小時內)
+                    bool isWithin24Hours = !string.IsNullOrEmpty(timeText) &&
+                                           (timeText.Contains("s") || timeText.Contains("m") || timeText.Contains("h") ||
+                                            timeText.Contains("秒") || timeText.Contains("分") || timeText.Contains("時")) &&
+                                           !(timeText.Contains("d") || timeText.Contains("w") || timeText.Contains("y") ||
+                                             timeText.Contains("天") || timeText.Contains("週") || timeText.Contains("周") || timeText.Contains("年"));
 
-                // 檢查是否包含關鍵字
-                bool hasKeyword = keywords.Any(k => content.Contains(k));
-                if (!hasKeyword) continue;
-
-                var matches = Regex.Matches(content, @"\b\d{4}\b");
-                var stocks = new HashSet<string>(matches.Select(m => m.Value).Where(s => s != "2026"));
-
-                if (stocks.Count >= minStockCount)
-                {
-                    await collectionRef.Document(Guid.NewGuid().ToString()).SetAsync(new Dictionary<string, object>
+                    if (!isWithin24Hours)
                     {
-                        { "author", Regex.Match(postUrl, @"(@[^/]+)").Value },
-                        { "content", content },
-                        { "url", postUrl },
-                        { "mentioned_stocks", stocks.ToList() },
-                        { "crawl_time", Timestamp.GetCurrentTimestamp() }
-                    });
-                    existingUrls.Add(postUrl);
-                    count++;
-                    Console.WriteLine($"✅ 成功存入新貼文: {postUrl}");
+                        Console.WriteLine($"[DEBUG] 非 24 小時內貼文，跳過 | 時間: {timeText}");
+                        continue;
+                    }
+
+                    // 3. 檢查當前處理的關鍵字
+                    if (!content.Contains(kw)) continue;
+
+                    // 4. 股票代號提取
+                    var matches = Regex.Matches(content, @"\b\d{4}\b");
+                    var stocks = new HashSet<string>(matches.Select(m => m.Value).Where(s => s != "2026"));
+
+                    if (stocks.Count >= minStockCount)
+                    {
+                        await collectionRef.Document(Guid.NewGuid().ToString()).SetAsync(new Dictionary<string, object>
+                        {
+                            { "author", Regex.Match(postUrl, @"(@[^/]+)").Value },
+                            { "content", content },
+                            { "url", postUrl },
+                            { "mentioned_stocks", stocks.ToList() },
+                            { "crawl_time", Timestamp.GetCurrentTimestamp() }
+                        });
+                        existingUrls.Add(postUrl); // 加入 Hashset 避免在同一輪搜尋中重複處理
+                        kwSuccessCount++;
+                        totalSavedCount++;
+                        Console.WriteLine($"✅ 成功存入新貼文 (關鍵字 {kw}): {postUrl}");
+                    }
                 }
-                else
-                {
-                    //Console.WriteLine($"[DEBUG] 股票代號不足 (找到 {stocks.Count} 個)，跳過: {postUrl}");
-                }
+                Console.WriteLine($"🔍 關鍵字 [{kw}] 處理完畢，本輪新增: {kwSuccessCount} 篇。");
+
+                // === 新增：存入 CSV 統計 ===
+                string dateToday = DateTime.Now.ToString("yyyy/MM/dd");
+                string csvLine = $"{kw},{dateToday},{kwSuccessCount}\n";
+                File.AppendAllText(csvPath, csvLine);
             }
 
             await context.CloseAsync();
-            Console.WriteLine($"✅ [任務 2 完成] 本次共彙整並寫入 {count} 篇貼文。");
+            Console.WriteLine($"\n✅ [任務 2 完成] 全部關鍵字彙整完畢，總共新增: {totalSavedCount} 篇貼文。");
         }
         catch (Exception ex)
         {
