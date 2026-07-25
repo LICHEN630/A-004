@@ -1,15 +1,29 @@
-  - name: Setup .NET
-    uses: actions/setup-dotnet@v4
-    with:
-      dotnet-version: '8.0.x'
+name: Auto Aggregate Only
 
-  - name: Create Firebase Key File
-    run: |
-      echo '${{ secrets.FIREBASE_KEY_JSON }}' > firebase-key.json
+on:
+  schedule:
+    # 每天執行兩次統計 (UTC時間 02:00 和 14:00)
+    - cron: '0 2,14 * * *'
+  workflow_dispatch:
 
-  - name: Build
-    run: dotnet build
+jobs:
+  run-aggregator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  # 關鍵修改：只傳入 aggregate 參數，不執行爬蟲任務
-  - name: Run Aggregation Only
-    run: dotnet run -- aggregate
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Create Firebase Key File
+        run: |
+          echo '${{ secrets.FIREBASE_KEY_JSON }}' > firebase-key.json
+
+      - name: Build
+        run: dotnet build
+
+      - name: Run Aggregation Only
+        run: dotnet run -- aggregate
