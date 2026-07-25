@@ -19,7 +19,8 @@ jobs:
 
       - name: Create Firebase Key File
         run: |
-          echo '${{ secrets.FIREBASE_KEY_JSON }}' > firebase-key.json
+          # 請把 firebase-key.json 建立在你的專案子資料夾 stock-fetcher 裡面
+          echo '${{ secrets.FIREBASE_KEY_JSON }}' > ./stock-fetcher/firebase-key.json
 
       - name: Build
         working-directory: ./stock-fetcher
