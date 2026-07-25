@@ -23,7 +23,9 @@ jobs:
           echo '${{ secrets.FIREBASE_KEY_JSON }}' > firebase-key.json
 
       - name: Build
+        working-directory: ./stock-fetcher
         run: dotnet build
 
       - name: Run Aggregation Only
+        working-directory: ./stock-fetcher
         run: dotnet run -- aggregate
