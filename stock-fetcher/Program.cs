@@ -17,7 +17,14 @@ class Program
         if (db == null) return;
 
         string command = args.Length > 0 ? args[0].ToLower() : "all";
-        if (command == "threads" || command == "all") await RunThreadsTask(db);
+
+        // 執行爬蟲抓取資料
+        if (command == "threads" || command == "all")
+            await RunThreadsTask(db);
+
+        // 執行 30 天統計更新 (Materialized View)
+        if (command == "aggregate" || command == "all")
+            await RunAggregationTask(db);
 
         Console.WriteLine("\n=== 任務執行完畢 ===");
     }
@@ -63,36 +70,21 @@ class Program
     }
 
     // ========================================================
-    // 任務 2：Playwright 自建免費爬蟲 (取代原本的 Apify)
+    // 任務 2：Playwright 自建爬蟲 
     // ========================================================
 
     static async Task RunThreadsTask(FirestoreDb db)
     {
-        Console.WriteLine("\n--- [任務 2] 開始執行 Playwright (多關鍵字循環 + 防錯點擊 + 網址除錯) ---");
+        Console.WriteLine("\n--- [任務 1] 開始執行 Playwright 爬蟲 ---");
 
         List<string> keywords = new List<string> {
             "可以買","閉眼買","閉眼入","會漲停","會有驚喜","我的建議",
-            "今天的散戶","明天的散戶","買在無人問津處","漲停","賣在人聲鼎沸時","獲利","上車","散戶","報牌","因為我不缺錢",
-            "買在起漲點","賣在高峰處","甜甜價","落袋","不要再買了"
+            "明天的散戶","台股","漲停","飆股","獲利","上車","散戶"
         };
-        int minStockCount = 1;
+        int minStockCount = 2;
 
         try
         {
-            // 確保 logs 資料夾存在，否則會報錯
-            string folderPath = "bin";
-            if (!Directory.Exists(folderPath)) { Directory.CreateDirectory(folderPath); }
-
-            string csvPath = Path.Combine(folderPath, "keyword_stats.txt");
-
-            // 2. 如果檔案不存在，先寫入標頭 (Header)
-            if (!File.Exists(csvPath))
-            {
-                File.WriteAllText(csvPath, "關鍵字,日期,篇數數量\n");
-            }
-
-
-            // 預先取得現有 URL，避免重複儲存
             CollectionReference collectionRef = db.Collection("threads_tips");
             var existingDocs = await collectionRef.GetSnapshotAsync();
             HashSet<string> existingUrls = new HashSet<string>(existingDocs.Documents.Select(d => d.GetValue<string>("url")));
@@ -106,19 +98,16 @@ class Program
             });
 
             var page = await context.NewPageAsync();
-            int totalSavedCount = 0;
+            var allCollectedPosts = new List<JsonElement>();
 
-            // 針對每個關鍵字執行搜尋與處理
             foreach (var kw in keywords)
             {
                 Console.WriteLine($"\n--- 正在搜尋關鍵字: {kw} ---");
                 string searchUrl = $"https://www.threads.net/search?q={Uri.EscapeDataString(kw)}";
                 await page.GotoAsync(searchUrl);
-
                 await page.WaitForSelectorAsync("div[data-pressable-container='true']", new PageWaitForSelectorOptions { Timeout = 15000 });
                 await Task.Delay(2000);
 
-                Console.WriteLine("嘗試切換至「最近」標籤...");
                 try
                 {
                     var latestTab = page.GetByText("最近", new() { Exact = true }).First;
@@ -132,14 +121,12 @@ class Program
                     Console.WriteLine($"⚠️ 無法切換至最近標籤 (已略過): {ex.Message}");
                 }
 
-                // 向下捲動抓取資料
                 for (int i = 0; i < 20; i++)
                 {
                     await page.EvaluateAsync("window.scrollTo(0, document.body.scrollHeight)");
-                    await Task.Delay(2000);
+                    await Task.Delay(5000);
                 }
 
-                // 抓取當前頁面資料
                 var posts = await page.EvaluateAsync<JsonElement>(@"() => {
                     const results = [];
                     document.querySelectorAll('div[data-pressable-container=""true""]').forEach(art => {
@@ -156,67 +143,215 @@ class Program
                     return results;
                 }");
 
-                // 在迴圈內立即進行篩選與儲存
-                int kwSuccessCount = 0;
-                foreach (var post in posts.EnumerateArray())
+                foreach (var item in posts.EnumerateArray()) allCollectedPosts.Add(item);
+            }
+
+            int count = 0;
+            var uniquePosts = allCollectedPosts.GroupBy(p => p.GetProperty("post_url").GetString()).Select(g => g.First());
+
+            foreach (var post in uniquePosts)
+            {
+                string postUrl = post.GetProperty("post_url").GetString() ?? "";
+                string content = post.GetProperty("text_content").GetString() ?? "";
+                string timeText = post.GetProperty("time_text").GetString() ?? "";
+
+                if (string.IsNullOrEmpty(postUrl) || existingUrls.Contains(postUrl)) continue;
+
+                bool isWithin24Hours = !string.IsNullOrEmpty(timeText) &&
+                                       (timeText.Contains("s") || timeText.Contains("m") || timeText.Contains("h") ||
+                                        timeText.Contains("秒") || timeText.Contains("分") || timeText.Contains("時")) &&
+                                       !(timeText.Contains("d") || timeText.Contains("w") || timeText.Contains("y") ||
+                                         timeText.Contains("天") || timeText.Contains("週") || timeText.Contains("周") || timeText.Contains("年"));
+
+                if (!isWithin24Hours) continue;
+
+                bool hasKeyword = keywords.Any(k => content.Contains(k));
+                if (!hasKeyword) continue;
+
+                var matches = Regex.Matches(content, @"\b\d{4}\b");
+                var stocks = new HashSet<string>(matches.Select(m => m.Value).Where(s => s != "2026"));
+
+                if (stocks.Count >= minStockCount)
                 {
-                    string postUrl = post.GetProperty("post_url").GetString() ?? "";
-                    string content = post.GetProperty("text_content").GetString() ?? "";
-                    string timeText = post.GetProperty("time_text").GetString() ?? "";
-
-                    // 1. 重複檢查
-                    if (string.IsNullOrEmpty(postUrl) || existingUrls.Contains(postUrl)) continue;
-
-                    // 2. 時間篩選 (24小時內)
-                    bool isWithin24Hours = !string.IsNullOrEmpty(timeText) &&
-                                           (timeText.Contains("s") || timeText.Contains("m") || timeText.Contains("h") ||
-                                            timeText.Contains("秒") || timeText.Contains("分") || timeText.Contains("時")) &&
-                                           !(timeText.Contains("d") || timeText.Contains("w") || timeText.Contains("y") ||
-                                             timeText.Contains("天") || timeText.Contains("週") || timeText.Contains("周") || timeText.Contains("年"));
-
-                    if (!isWithin24Hours)
+                    await collectionRef.Document(Guid.NewGuid().ToString()).SetAsync(new Dictionary<string, object>
                     {
-                        Console.WriteLine($"[DEBUG] 非 24 小時內貼文，跳過 | 時間: {timeText}");
-                        continue;
-                    }
-
-                    // 3. 檢查當前處理的關鍵字
-                    if (!content.Contains(kw)) continue;
-
-                    // 4. 股票代號提取
-                    var matches = Regex.Matches(content, @"\b\d{4}\b");
-                    var stocks = new HashSet<string>(matches.Select(m => m.Value).Where(s => s != "2026"));
-
-                    if (stocks.Count >= minStockCount)
-                    {
-                        await collectionRef.Document(Guid.NewGuid().ToString()).SetAsync(new Dictionary<string, object>
-                        {
-                            { "author", Regex.Match(postUrl, @"(@[^/]+)").Value },
-                            { "content", content },
-                            { "url", postUrl },
-                            { "mentioned_stocks", stocks.ToList() },
-                            { "crawl_time", Timestamp.GetCurrentTimestamp() }
-                        });
-                        existingUrls.Add(postUrl); // 加入 Hashset 避免在同一輪搜尋中重複處理
-                        kwSuccessCount++;
-                        totalSavedCount++;
-                        Console.WriteLine($"✅ 成功存入新貼文 (關鍵字 {kw}): {postUrl}");
-                    }
+                        { "author", Regex.Match(postUrl, @"(@[^/]+)").Value },
+                        { "content", content },
+                        { "url", postUrl },
+                        { "mentioned_stocks", stocks.ToList() },
+                        { "crawl_time", Timestamp.GetCurrentTimestamp() }
+                    });
+                    existingUrls.Add(postUrl);
+                    count++;
+                    Console.WriteLine($"✅ 成功存入新貼文: {postUrl}");
                 }
-                Console.WriteLine($"🔍 關鍵字 [{kw}] 處理完畢，本輪新增: {kwSuccessCount} 篇。");
-
-                // === 新增：存入 CSV 統計 ===
-                string dateToday = DateTime.Now.ToString("yyyy/MM/dd");
-                string csvLine = $"{kw},{dateToday},{kwSuccessCount}\n";
-                File.AppendAllText(csvPath, csvLine);
             }
 
             await context.CloseAsync();
-            Console.WriteLine($"\n✅ [任務 2 完成] 全部關鍵字彙整完畢，總共新增: {totalSavedCount} 篇貼文。");
+            Console.WriteLine($"✅ [任務 1 完成] 本次共寫入 {count} 篇新貼文。");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ [任務 2 失敗]: {ex.Message}");
+            Console.WriteLine($"❌ [任務 1 失敗]: {ex.Message}");
+        }
+    }
+
+    // ==========================================
+    // 新增：任務 3 - 30 天數據統整 (Materialized View)
+    // ==========================================
+    static async Task RunAggregationTask(FirestoreDb db)
+    {
+        Console.WriteLine("\n--- [任務 2] 開始統整最近 30 天股票數據 ---");
+
+        // 演算法參數
+        int PROXIMITY_LIMIT = 25;
+        int MAX_DAYS_TO_KEEP = 30;
+        int TIME_DECAY_THRESHOLD_DAYS = 3;
+        double DECAY_WEIGHT = 0.2;
+        int MIN_MENTIONS_TO_SHOW = 2;
+        int MIN_MENTIONS_FOR_FOMO = 3;
+
+        string[] hypeWords = { "上車", "買爆", "閉眼買", "會漲停", "會大漲", "噴出", "發財", "買必賺", "可以買" };
+        string[] bearWords = { "下車", "快逃", "割韭菜", "出清", "跌停", "先別碰", "不要碰", "不要賣" };
+
+        DateTime nowUtc = DateTime.UtcNow;
+        DateTime cutoffDate = nowUtc.AddDays(-MAX_DAYS_TO_KEEP);
+
+        try
+        {
+            // 1. 取得股票名稱對照表 (供鄰近定位演算法使用)
+            var stockNameMap = await FetchStockNamesAsync();
+
+            // 2. 從資料庫撈取 30 天內的貼文 (需確保 Firebase 建立複合索引，或者單純把全部拉下來做篩選)
+            Console.WriteLine($"正在讀取 {cutoffDate.ToLocalTime():yyyy-MM-dd} 之後的資料...");
+            Query query = db.Collection("threads_tips").WhereGreaterThanOrEqualTo("crawl_time", Timestamp.FromDateTime(cutoffDate));
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            Console.WriteLine($"共讀取到 {snapshot.Documents.Count} 篇貼文，準備開始計算...");
+
+            // 3. 在記憶體中進行加權與分組計算
+            var stats = new Dictionary<string, StockStatData>();
+
+            foreach (var doc in snapshot.Documents)
+            {
+                if (!doc.TryGetValue("mentioned_stocks", out List<string> stocks)) continue;
+                string content = doc.ContainsField("content") ? doc.GetValue<string>("content") : "";
+                Timestamp crawlTimestamp = doc.GetValue<Timestamp>("crawl_time");
+                DateTime postDate = crawlTimestamp.ToDateTime();
+
+                double daysOld = (nowUtc - postDate).TotalDays;
+                double weight = daysOld <= TIME_DECAY_THRESHOLD_DAYS ? 1.0 : DECAY_WEIGHT;
+
+                foreach (var stock in stocks)
+                {
+                    if (!stats.ContainsKey(stock))
+                    {
+                        stats[stock] = new StockStatData
+                        {
+                            FirstTime = postDate,
+                            LastTime = postDate,
+                            Tags = new HashSet<string>()
+                        };
+                    }
+
+                    var stat = stats[stock];
+                    stat.RawCount += 1;
+                    stat.WeightedCount += weight;
+
+                    // 更新時間
+                    if (postDate < stat.FirstTime) stat.FirstTime = postDate;
+                    if (postDate > stat.LastTime) stat.LastTime = postDate;
+
+                    // 鄰近定位演算法 (尋找關鍵字)
+                    string stockName = stockNameMap.ContainsKey(stock) ? stockNameMap[stock] : "";
+                    List<int> stockIndices = GetAllIndices(content, stock);
+                    if (!string.IsNullOrEmpty(stockName))
+                    {
+                        stockIndices.AddRange(GetAllIndices(content, stockName));
+                    }
+
+                    bool CheckProximity(string word)
+                    {
+                        List<int> wordIndices = GetAllIndices(content, word);
+                        foreach (int sIdx in stockIndices)
+                        {
+                            foreach (int wIdx in wordIndices)
+                            {
+                                if (Math.Abs(sIdx - wIdx) <= PROXIMITY_LIMIT) return true;
+                            }
+                        }
+                        return false;
+                    }
+
+                    foreach (var word in hypeWords)
+                    {
+                        if (CheckProximity(word)) { stat.WeightedHypeScore += weight; stat.Tags.Add(word); }
+                    }
+                    foreach (var word in bearWords)
+                    {
+                        if (CheckProximity(word)) { stat.Tags.Add(word); }
+                    }
+                }
+            }
+
+            // 4. 篩選符合門檻的資料並寫入 Stocks_statistics (使用 Batch 整批更新)
+            Console.WriteLine("計算完成，準備覆寫資料庫...");
+
+            // 4.1 先撈出 Stocks_statistics 裡舊的資料，準備刪除 (確保沒有殭屍股票)
+            var oldStatsSnapshot = await db.Collection("Stocks_statistics").GetSnapshotAsync();
+            WriteBatch batch = db.StartBatch();
+            int opCount = 0;
+
+            foreach (var doc in oldStatsSnapshot.Documents)
+            {
+                batch.Delete(doc.Reference);
+                opCount++;
+                if (opCount == 490) { await batch.CommitAsync(); batch = db.StartBatch(); opCount = 0; } // Firestore Batch 上限 500
+            }
+
+            // 4.2 將新計算好的資料加入 Batch
+            int newRecordsCount = 0;
+            foreach (var kvp in stats)
+            {
+                string stockId = kvp.Key;
+                var stat = kvp.Value;
+
+                // 門檻一：必須大於設定次數才紀錄，且要是合法的台股
+                if (stat.RawCount >= MIN_MENTIONS_TO_SHOW && stockNameMap.ContainsKey(stockId))
+                {
+                    double fomoRatio = 0;
+                    // 門檻二：決定是否給予 FOMO 分數
+                    if (stat.RawCount >= MIN_MENTIONS_FOR_FOMO && stat.WeightedCount > 0)
+                    {
+                        fomoRatio = stat.WeightedHypeScore / stat.WeightedCount;
+                    }
+
+                    var docData = new Dictionary<string, object>
+                    {
+                        { "stock_id", stockId },
+                        { "count", stat.RawCount },
+                        { "fomo_index", Math.Round(fomoRatio, 2) },
+                        { "tags", stat.Tags.ToList() },
+                        // 轉換為台北時間 (UTC+8) 儲存字串，方便網頁直接顯示
+                        { "first_time", stat.FirstTime.AddHours(8).ToString("yyyy/MM/dd HH:mm:ss") },
+                        { "last_time", stat.LastTime.AddHours(8).ToString("yyyy/MM/dd HH:mm:ss") }
+                    };
+
+                    batch.Set(db.Collection("Stocks_statistics").Document(stockId), docData);
+                    opCount++;
+                    newRecordsCount++;
+
+                    if (opCount == 490) { await batch.CommitAsync(); batch = db.StartBatch(); opCount = 0; }
+                }
+            }
+
+            // 提交剩餘的 Batch 操作
+            if (opCount > 0) await batch.CommitAsync();
+
+            Console.WriteLine($"✅ [任務 2 完成] 成功更新 {newRecordsCount} 筆近期熱門股票統計至 Stocks_statistics！");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ [任務 2 失敗]: {ex.Message}\n{ex.StackTrace}");
         }
     }
 
@@ -228,5 +363,66 @@ class Program
             return await FirestoreDb.CreateAsync("ai-001-d64e3");
         }
         catch { return null; }
+    }
+
+    // ==========================================
+    // 輔助函式區
+    // ==========================================
+
+    // 取得字串中所有子字串的位置
+    static List<int> GetAllIndices(string source, string matchString)
+    {
+        List<int> indices = new List<int>();
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(matchString)) return indices;
+
+        int index = source.IndexOf(matchString);
+        while (index != -1)
+        {
+            indices.Add(index);
+            index = source.IndexOf(matchString, index + matchString.Length);
+        }
+        return indices;
+    }
+
+    // 呼叫 FinMind 取得股票名稱對照表
+    static async Task<Dictionary<string, string>> FetchStockNamesAsync()
+    {
+        var map = new Dictionary<string, string>();
+        try
+        {
+            using HttpClient client = new HttpClient();
+            string response = await client.GetStringAsync("https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo");
+            using JsonDocument doc = JsonDocument.Parse(response);
+
+            if (doc.RootElement.GetProperty("msg").GetString() == "success")
+            {
+                var data = doc.RootElement.GetProperty("data");
+                foreach (var item in data.EnumerateArray())
+                {
+                    string id = item.GetProperty("stock_id").GetString();
+                    string name = item.GetProperty("stock_name").GetString();
+                    if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(name))
+                    {
+                        map[id] = name;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[警告] 無法取得股票代碼表: {ex.Message}");
+        }
+        return map;
+    }
+
+    // 內部資料結構，用於統計暫存
+    class StockStatData
+    {
+        public int RawCount { get; set; } = 0;
+        public double WeightedCount { get; set; } = 0;
+        public double WeightedHypeScore { get; set; } = 0;
+        public DateTime FirstTime { get; set; }
+        public DateTime LastTime { get; set; }
+        public HashSet<string> Tags { get; set; }
     }
 }
