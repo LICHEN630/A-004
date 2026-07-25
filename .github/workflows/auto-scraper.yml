@@ -22,6 +22,7 @@ jobs:
           echo '${{ secrets.FIREBASE_KEY_JSON }}' > firebase-key.json
 
       - name: Build
+        working-directory: ./stock-fetcher
         run: dotnet build
 
       # 新增此步驟來安裝 Playwright 瀏覽器
@@ -29,4 +30,5 @@ jobs:
         run: dotnet tool run playwright install --with-deps
 
       - name: Run Aggregation Only
+        working-directory: ./stock-fetcher
         run: dotnet run -- aggregate
