@@ -13,6 +13,11 @@ class Program
     static async Task Main(string[] args)
     {
         Console.WriteLine("=== 系統啟動 ===");
+        Console.WriteLine($"收到的參數數量: {args.Length}");
+        foreach (var arg in args)
+        {
+            Console.WriteLine($"參數內容: {arg}");
+        }
         FirestoreDb db = await InitializeFirebaseAsync();
         if (db == null) return;
 
@@ -23,8 +28,10 @@ class Program
             await RunThreadsTask(db);
 
         // 執行 30 天統計更新 (Materialized View)
-        if (command == "aggregate" || command == "all")
+        if (args.Contains("aggregate") || (args.Length > 0 && args[0] == "aggregate"))
+        {
             await RunAggregationTask(db);
+        }
 
         Console.WriteLine("\n=== 任務執行完畢 ===");
     }
