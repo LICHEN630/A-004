@@ -366,10 +366,26 @@ class Program
     {
         try
         {
-            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", "firebase-key.json");
+            // 取得當前執行的絕對路徑，並拼出 firebase-key.json 的絕對路徑
+            string keyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "firebase-key.json");
+
+            // 如果執行目錄找不到，試著用工作目錄
+            if (!File.Exists(keyPath))
+            {
+                keyPath = Path.Combine(Directory.GetCurrentDirectory(), "firebase-key.json");
+            }
+
+            Console.WriteLine($"[Firebase] 使用的金鑰路徑: {keyPath}");
+
+            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", keyPath); 
             return await FirestoreDb.CreateAsync("ai-001-d64e3");
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            // 加上這行，萬一初始化失敗，你可以直接在 GitHub 日誌看到詳細錯誤，而不是默默回傳 null
+            Console.WriteLine($"[Firebase 初始化錯誤] {ex.Message}");
+            return null;
+        }
     }
 
     // ==========================================
