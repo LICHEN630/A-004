@@ -25,6 +25,10 @@ jobs:
         working-directory: ./stock-fetcher
         run: dotnet build
 
+      # 新增這一行來還原工具
+      - name: Restore dotnet tools
+        run: dotnet tool restore
+
       # 新增此步驟來安裝 Playwright 瀏覽器
       - name: Install Playwright Browsers
         run: dotnet tool run playwright install --with-deps
