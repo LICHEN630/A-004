@@ -30,5 +30,7 @@ jobs:
         run: dotnet tool restore
         
       - name: Run Aggregation Only
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/firebase-key.json
         working-directory: ./stock-fetcher
         run: dotnet run -- aggregate
