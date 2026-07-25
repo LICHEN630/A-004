@@ -10,5 +10,6 @@
   - name: Build
     run: dotnet build
 
+  # 關鍵修改：只傳入 aggregate 參數，不執行爬蟲任務
   - name: Run Aggregation Only
     run: dotnet run -- aggregate
