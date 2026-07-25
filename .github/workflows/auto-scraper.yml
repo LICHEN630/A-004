@@ -25,6 +25,12 @@ jobs:
       - name: Build
         working-directory: ./stock-fetcher
         run: dotnet build
+        
+      - name: Install Playwright Browsers
+        run: |
+          # 假設您是在專案根目錄下運行，且有安裝 Microsoft.Playwright.CLI 工具
+          dotnet tool restore
+          dotnet playwright install chromium
 
       - name: Run Aggregation Only
         working-directory: ./stock-fetcher
