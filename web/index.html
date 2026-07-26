@@ -463,15 +463,60 @@
                     displayTitle = `${stockNameMap[stockNo]} (${stockNo})`;
                 }
                 titleLabel.innerHTML = `<i class="fas fa-chart-line"></i> ${displayTitle} (近90天走勢)`;
+                // 將資料轉換為 K線 格式，並另外準備成交量數據
+                const candlestickData = json.data.map(item => ({
+                    x: new Date(item.date).getTime(),
+                    y: [item.open, item.max, item.min, item.close]
+                }));
+
+                const volumeData = json.data.map(item => ({
+                    x: new Date(item.date).getTime(),
+                    y: item.Trading_Volume // FinMind 回傳的成交量欄位名稱
+                }));
 
                 const options = {
-                    series: [{ name: 'K線', type: 'candlestick', data: formattedData }],
-                    chart: { type: 'candlestick', height: 400 },
-                    xaxis: { type: 'datetime' },
+                    series: [
+                        { name: 'K線', type: 'candlestick', data: candlestickData },
+                        { name: '成交量', type: 'column', data: volumeData }
+                    ],
+                    chart: {
+                        type: 'candlestick',
+                        height: 400,
+                        stacked: false,
+                        toolbar: { show: true }
+                    },
                     plotOptions: {
                         candlestick: {
                             colors: { upward: '#dc3545', downward: '#28a745' },
                             wick: { useFillColor: true }
+                        }
+                    },
+                    stroke: {
+                        width: [1, 1]
+                    },
+                    xaxis: { type: 'datetime' },
+                    yaxis: [
+                        {
+                            // 第一個 Y 軸：給 K線圖使用
+                            tooltip: { enabled: true }
+                        },
+                        {
+                            // 第二個 Y 軸：給成交量柱狀圖使用（放在下方隱藏或獨立顯示）
+                            seriesName: '成交量',
+                            show: false
+                        }
+                    ],
+                    tooltip: {
+                        shared: true,
+                        intersect: false,
+                        y: {
+                            formatter: function (value, { seriesIndex }) {
+                                // 如果是第二個系列（成交量），加上張/股單位
+                                if (seriesIndex === 1) {
+                                    return value.toLocaleString() + ' 股';
+                                }
+                                return value;
+                            }
                         }
                     }
                 };
