@@ -226,10 +226,10 @@ class Program
 
         try
         {
-            // 1. 取得股票名稱對照表 (供鄰近定位演算法使用)
+            // 1. 取得股票名稱對照表
             var stockNameMap = await FetchStockNamesAsync();
 
-            // 2. 從資料庫撈取 30 天內的貼文 (需確保 Firebase 建立複合索引，或者單純把全部拉下來做篩選)
+            // 2. 從資料庫撈取 30 天內的貼文
             Console.WriteLine($"正在讀取 {cutoffDate.ToLocalTime():yyyy-MM-dd} 之後的資料...");
             Query query = db.Collection("threads_tips").WhereGreaterThanOrEqualTo("crawl_time", Timestamp.FromDateTime(cutoffDate));
             QuerySnapshot snapshot = await query.GetSnapshotAsync();
@@ -245,6 +245,9 @@ class Program
                 Timestamp crawlTimestamp = doc.GetValue<Timestamp>("crawl_time");
                 DateTime postDate = crawlTimestamp.ToDateTime();
 
+                // 轉成台北時間字串，準備給標籤使用
+                string formattedPostTime = postDate.AddHours(8).ToString("yyyy/MM/dd HH:mm:ss");
+
                 double daysOld = (nowUtc - postDate).TotalDays;
                 double weight = daysOld <= TIME_DECAY_THRESHOLD_DAYS ? 1.0 : DECAY_WEIGHT;
 
@@ -256,7 +259,7 @@ class Program
                         {
                             FirstTime = postDate,
                             LastTime = postDate,
-                            Tags = new HashSet<string>()
+                            Tags = new Dictionary<string, string>()
                         };
                     }
 
@@ -264,7 +267,7 @@ class Program
                     stat.RawCount += 1;
                     stat.WeightedCount += weight;
 
-                    // 更新時間
+                    // 更新整體股票的時間
                     if (postDate < stat.FirstTime) stat.FirstTime = postDate;
                     if (postDate > stat.LastTime) stat.LastTime = postDate;
 
@@ -289,21 +292,32 @@ class Program
                         return false;
                     }
 
+                    // 檢查 Hype 關鍵字
                     foreach (var word in hypeWords)
                     {
-                        if (CheckProximity(word)) { stat.WeightedHypeScore += weight; stat.Tags.Add(word); }
+                        if (CheckProximity(word))
+                        {
+                            stat.WeightedHypeScore += weight;
+                            // 記錄或覆寫該話術的最後出現時間
+                            stat.Tags[word] = formattedPostTime;
+                        }
                     }
+
+                    // 檢查 Bear 關鍵字
                     foreach (var word in bearWords)
                     {
-                        if (CheckProximity(word)) { stat.Tags.Add(word); }
+                        if (CheckProximity(word))
+                        {
+                            // 記錄或覆寫該話術的最後出現時間
+                            stat.Tags[word] = formattedPostTime;
+                        }
                     }
                 }
             }
 
-            // 4. 篩選符合門檻的資料並寫入 Stocks_statistics (使用 Batch 整批更新)
-            Console.WriteLine("計算完成，準備覆寫資料庫...");
+            // 4. 寫入 Stocks_statistics
+            Console.WriteLine("計算完成，準備更新資料庫...");
 
-            // 4.1 先撈出 Stocks_statistics 裡舊的資料，準備刪除 (確保沒有殭屍股票)
             var oldStatsSnapshot = await db.Collection("Stocks_statistics").GetSnapshotAsync();
             WriteBatch batch = db.StartBatch();
             int opCount = 0;
@@ -312,36 +326,33 @@ class Program
             {
                 batch.Delete(doc.Reference);
                 opCount++;
-                if (opCount == 490) { await batch.CommitAsync(); batch = db.StartBatch(); opCount = 0; } // Firestore Batch 上限 500
+                if (opCount == 490) { await batch.CommitAsync(); batch = db.StartBatch(); opCount = 0; }
             }
 
-            // 4.2 將新計算好的資料加入 Batch
             int newRecordsCount = 0;
             foreach (var kvp in stats)
             {
                 string stockId = kvp.Key;
                 var stat = kvp.Value;
 
-                // 門檻一：必須大於設定次數才紀錄，且要是合法的台股
                 if (stat.RawCount >= MIN_MENTIONS_TO_SHOW && stockNameMap.ContainsKey(stockId))
                 {
                     double fomoRatio = 0;
-                    // 門檻二：決定是否給予 FOMO 分數
                     if (stat.RawCount >= MIN_MENTIONS_FOR_FOMO && stat.WeightedCount > 0)
                     {
                         fomoRatio = stat.WeightedHypeScore / stat.WeightedCount;
                     }
 
+                    // 這裡直接把 Dictionary 型態的 stat.Tags 傳進去，Firebase 就會自動建立 Map 結構！
                     var docData = new Dictionary<string, object>
-                    {
-                        { "stock_id", stockId },
-                        { "count", stat.RawCount },
-                        { "fomo_index", Math.Round(fomoRatio, 2) },
-                        { "tags", stat.Tags.ToList() },
-                        // 轉換為台北時間 (UTC+8) 儲存字串，方便網頁直接顯示
-                        { "first_time", stat.FirstTime.AddHours(8).ToString("yyyy/MM/dd HH:mm:ss") },
-                        { "last_time", stat.LastTime.AddHours(8).ToString("yyyy/MM/dd HH:mm:ss") }
-                    };
+                {
+                    { "stock_id", stockId },
+                    { "count", stat.RawCount },
+                    { "fomo_index", Math.Round(fomoRatio, 2) },
+                    { "tags", stat.Tags }, // 這裡傳入 Dictionary<string, string>
+                    { "first_time", stat.FirstTime.AddHours(8).ToString("yyyy/MM/dd HH:mm:ss") },
+                    { "last_time", stat.LastTime.AddHours(8).ToString("yyyy/MM/dd HH:mm:ss") }
+                };
 
                     batch.Set(db.Collection("Stocks_statistics").Document(stockId), docData);
                     opCount++;
@@ -351,10 +362,9 @@ class Program
                 }
             }
 
-            // 提交剩餘的 Batch 操作
             if (opCount > 0) await batch.CommitAsync();
 
-            Console.WriteLine($"✅ [任務 2 完成] 成功更新 {newRecordsCount} 筆近期熱門股票統計至 Stocks_statistics！");
+            Console.WriteLine($"✅ [任務 2 完成] 成功更新 {newRecordsCount} 筆熱門股票統計（帶有 Map 格式 Tags）至 Stocks_statistics！");
         }
         catch (Exception ex)
         {
@@ -439,13 +449,13 @@ class Program
     }
 
     // 內部資料結構，用於統計暫存
-    class StockStatData
+    public class StockStatData
     {
         public int RawCount { get; set; } = 0;
         public double WeightedCount { get; set; } = 0;
         public double WeightedHypeScore { get; set; } = 0;
         public DateTime FirstTime { get; set; }
         public DateTime LastTime { get; set; }
-        public HashSet<string> Tags { get; set; }
+        public Dictionary<string, string> Tags { get; set; } = new Dictionary<string, string>();
     }
 }
