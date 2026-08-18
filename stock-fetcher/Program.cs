@@ -37,7 +37,7 @@ class Program
     }
 
     // ==========================================================
-    // 任務 1：抓取 FinMind 歷史 K 線並寫入資料庫 (保持原樣)
+    // 任務 1：抓取 FinMind 歷史 K 線並寫入資料庫
     // ==========================================================
     static async Task RunKLineTask(FirestoreDb db)
     {
@@ -215,13 +215,13 @@ class Program
 
         // 演算法參數
         int PROXIMITY_LIMIT = 25;
-        int MAX_DAYS_TO_KEEP = 30;
+        int MAX_DAYS_TO_KEEP = 20;
         int TIME_DECAY_THRESHOLD_DAYS = 3;
         double DECAY_WEIGHT = 0.2;
         int MIN_MENTIONS_TO_SHOW = 2;
         int MIN_MENTIONS_FOR_FOMO = 3;
 
-        string[] hypeWords = { "上車", "買爆", "閉眼買", "會漲停", "會大漲", "噴出", "發財", "買必賺", "可以買" };
+        string[] hypeWords = { "上車", "買爆", "閉眼買", "會漲停", "漲停", "會大漲", "噴出", "發財", "買必賺", "可以買" };
         string[] bearWords = { "下車", "快逃", "割韭菜", "出清", "跌停", "先別碰", "不要碰", "不要賣" };
 
         DateTime nowUtc = DateTime.UtcNow;
@@ -232,7 +232,7 @@ class Program
             // 1. 取得股票名稱對照表
             var stockNameMap = await FetchStockNamesAsync();
 
-            // 2. 從資料庫撈取 30 天內的貼文
+            // 2. 從資料庫撈取 20 天內的貼文
             Console.WriteLine($"正在讀取 {cutoffDate.ToLocalTime():yyyy-MM-dd} 之後的資料...");
             Query query = db.Collection("threads_tips").WhereGreaterThanOrEqualTo("crawl_time", Timestamp.FromDateTime(cutoffDate));
             QuerySnapshot snapshot = await query.GetSnapshotAsync();
