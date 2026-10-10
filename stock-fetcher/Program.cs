@@ -220,7 +220,7 @@ class Program
         double DECAY_WEIGHT = 0.2;
         int MIN_MENTIONS_TO_SHOW = 2;
         int MIN_MENTIONS_FOR_FOMO = 3;
-
+        //
         string[] hypeWords = { "上車", "買爆", "閉眼買", "會漲停", "漲停", "會大漲", "噴出", "發財", "買必賺", "可以買" };
         string[] bearWords = { "下車", "快逃", "割韭菜", "出清", "跌停", "先別碰", "不要碰", "不要賣" };
 
